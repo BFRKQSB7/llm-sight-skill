@@ -1,0 +1,7 @@
+# 本机个性化配置与运行产物不入库
+.venv/
+config.json
+models/
+tmp/
+__pycache__/
+*.pyc

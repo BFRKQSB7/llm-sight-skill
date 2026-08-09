@@ -1,0 +1,32 @@
+{
+  "PP-OCRv6_medium": {
+    "ocr_version": "PP-OCRv6",
+    "text_detection_model_name": null,
+    "text_recognition_model_name": null,
+    "desc": "默认，质量与速度平衡"
+  },
+  "PP-OCRv6_tiny": {
+    "ocr_version": "PP-OCRv6",
+    "text_detection_model_name": "PP-OCRv6_tiny_det",
+    "text_recognition_model_name": "PP-OCRv6_tiny_rec",
+    "desc": "最快，轻量"
+  },
+  "PP-OCRv5_mobile": {
+    "ocr_version": "PP-OCRv5",
+    "text_detection_model_name": "PP-OCRv5_mobile_det",
+    "text_recognition_model_name": "PP-OCRv5_mobile_rec",
+    "desc": "v5 移动端，快"
+  },
+  "PP-OCRv5_server": {
+    "ocr_version": "PP-OCRv5",
+    "text_detection_model_name": "PP-OCRv5_server_det",
+    "text_recognition_model_name": "PP-OCRv5_server_rec",
+    "desc": "v5 服务器版，更准"
+  },
+  "PP-OCRv4_mobile": {
+    "ocr_version": "PP-OCRv4",
+    "text_detection_model_name": "PP-OCRv4_mobile_det",
+    "text_recognition_model_name": "PP-OCRv4_mobile_rec",
+    "desc": "v4 移动端，兼容老环境"
+  }
+}
