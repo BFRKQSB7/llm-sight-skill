@@ -2,7 +2,7 @@
 
 [中文](../README.md) | **English**
 
-![](https://img.shields.io/badge/version-v1.0.0-blue)
+![](https://img.shields.io/badge/version-v1.0.1-blue)
 ![](https://img.shields.io/badge/license-MIT-green)
 
 **Give non-multimodal LLMs a pair of "eyes"** — extracts text from images,

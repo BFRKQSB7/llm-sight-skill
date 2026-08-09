@@ -43,6 +43,32 @@ def load_models_map():
     return json.loads(MODELS_JSON.read_text(encoding="utf-8"))
 
 
+def ask_model(mmap, default):
+    """交互询问下载哪个模型；非交互返回 None（由调用方用默认）。"""
+    if not sys.stdin.isatty():
+        return None
+    print("未检测到 OCR 模型，请选择要下载的模型：")
+    for i, name in enumerate(mmap, 1):
+        print(f"  {i}. {name} — {mmap[name].get('desc', '')}")
+    while True:
+        s = input(f"选择（回车用默认 {default}）: ").strip()
+        if not s:
+            return default
+        if s.isdigit() and 1 <= int(s) <= len(mmap):
+            return list(mmap)[int(s) - 1]
+        if s in mmap:
+            return s
+        print("无效，重试")
+
+
+def ask_proxy():
+    """交互询问代理地址；空回车=直连；非交互返回 None。"""
+    if not sys.stdin.isatty():
+        return None
+    s = input("代理地址（回车=直连，如 http://127.0.0.1:<端口>）: ").strip()
+    return s or None
+
+
 def read_config():
     cfg = dict(DEFAULT_CONFIG)
     if CONFIG.exists():
@@ -124,11 +150,17 @@ def ensure_venv(system_python):
         raise SystemExit("[install] venv 构建后 paddleocr 仍不可用")
 
 
-def ensure_models(config, force=False):
+def ensure_models(config, force=False, model=None, proxy=None):
     mmap = load_models_map()
-    name = config.get("model") or DEFAULT_CONFIG["model"]
+    name = model or config.get("model") or DEFAULT_CONFIG["model"]
     if name not in mmap:
         raise SystemExit(f"[install] 未知模型: {name}（可用: {', '.join(mmap)}）")
+    if model:
+        config["model"] = model
+    if proxy is not None:
+        config["proxy"] = proxy or None
+    if model or proxy is not None:
+        write_config(config)  # 改动即落盘，即使模型已存在（跳过下载）也保存
     if not force and (SKILL_DIR / "models" / "official_models").exists():
         eprint("[install] 模型已存在，跳过下载")
         return
@@ -148,9 +180,14 @@ def ensure_models(config, force=False):
     tmp.mkdir(exist_ok=True)
     job = tmp / "warmup.json"
     job.write_text(json.dumps({k: v for k, v in params.items() if k != "desc"}, ensure_ascii=False), encoding="utf-8")
+    env = dict(os.environ)
+    if proxy:
+        for var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+            env[var] = proxy
+        eprint(f"[install] 模型下载走代理 {proxy}")
     eprint(f"[install] 下载模型 {name}（首次可能几分钟）")
     r = subprocess.run([str(VENV_PY), "-c", snippet, str(job), str(SKILL_DIR / "models")],
-                       capture_output=True, text=True)
+                       env=env, capture_output=True, text=True)
     job.unlink(missing_ok=True)
     if r.returncode != 0 or "MODELS_OK" not in r.stdout:
         raise SystemExit(f"[install] 模型下载失败:\n{r.stdout}\n{r.stderr}")
@@ -213,7 +250,7 @@ def cmd_check():
     return 0
 
 
-def cmd_install():
+def cmd_install(args):
     found = find_python()
     if not found:
         print(f"[install] 未检测到可用的 Python（3.8-3.13）。请先安装: {PY_DOWNLOAD_URL}")
@@ -222,7 +259,25 @@ def cmd_install():
     eprint(f"[install] 使用系统 python {ver}")
     ensure_venv(system_python)
     cfg = read_config()
-    ensure_models(cfg)
+    mmap = load_models_map()
+
+    # 首次无模型：询问下载哪个模型 + 是否走代理（非交互则用默认/直连）
+    if not (SKILL_DIR / "models" / "official_models").exists():
+        if not args.model:
+            picked = ask_model(mmap, cfg.get("model") or DEFAULT_CONFIG["model"])
+            if picked:
+                args.model = picked
+            else:
+                print(f"[install] 未交互输入，用默认模型 {cfg.get('model') or DEFAULT_CONFIG['model']}"
+                      f"（候选: {', '.join(mmap)}；想换用 setup.py install --model X）")
+        if args.proxy is None:
+            p = ask_proxy()
+            if p:
+                args.proxy = p
+            elif not sys.stdin.isatty():
+                eprint("[install] 未交互输入，模型下载直连；可用 setup.py install --proxy <地址> 走代理")
+
+    ensure_models(cfg, model=args.model, proxy=args.proxy)
     install_commands()
     print("[install] 完成。可用 /llm-sight-status 查看状态")
     return 0
@@ -257,7 +312,9 @@ def main():
     ap = argparse.ArgumentParser(description="llm-sight 环境引导器")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check", help="完整性检查")
-    sub.add_parser("install", help="引导：建 venv、确保模型、装斜杠命令")
+    pi = sub.add_parser("install", help="引导：建 venv、确保模型、装斜杠命令")
+    pi.add_argument("--model", help="要下载/使用的模型（默认 PP-OCRv6_medium）")
+    pi.add_argument("--proxy", help="模型下载代理地址，如 http://127.0.0.1:<端口>（不给则直连）")
     p = sub.add_parser("config", help="查看/修改配置")
     p.add_argument("--model")
     p.add_argument("--auto-update", type=lambda s: s.lower() in ("1", "true", "on", "yes"))
@@ -273,7 +330,7 @@ def main():
     if args.cmd == "check":
         return cmd_check()
     if args.cmd == "install":
-        return cmd_install()
+        return cmd_install(args)
     if args.cmd == "config":
         return cmd_config(args)
     if args.cmd == "update":

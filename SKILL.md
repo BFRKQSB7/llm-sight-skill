@@ -49,6 +49,13 @@ missing: run `/llm-sight-status` → `python "<SKILL_DIR>/scripts/setup.py" inst
 (builds `.venv`, ~1GB, downloads the model) → `/llm-sight-status` again. No
 Python? `setup.py` prints the download link — never auto-install Python yourself.
 
+On a first model download, **ask the user** before running `install`: which model
+(candidates: PP-OCRv6_medium 默认 / PP-OCRv6_tiny / PP-OCRv5_mobile /
+PP-OCRv5_server / PP-OCRv4_mobile) and whether to download through a proxy (e.g.
+`http://127.0.0.1:<端口>`; empty = download directly). Then run
+`setup.py install --model <X> --proxy <proxy>` (omit `--proxy` for direct). The
+chosen proxy is saved to config and reused by update checks.
+
 | Command | Action |
 |---|---|
 | `/llm-sight-status` | show python / venv / models / config status |

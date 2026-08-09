@@ -2,7 +2,7 @@
 
 **中文** | [English](./docs/en/README.md)
 
-![](https://img.shields.io/badge/version-v1.0.0-blue)
+![](https://img.shields.io/badge/version-v1.0.1-blue)
 ![](https://img.shields.io/badge/license-MIT-green)
 
 **给没有多模态能力的大模型一双"眼睛"**——用 PaddleOCR（PP-OCRv6）把图片/截图/扫描件里的文字提取成纯文本，非多模态模型就能读取图中内容。

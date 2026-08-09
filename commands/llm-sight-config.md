@@ -3,7 +3,12 @@ description: 配置 llm-sight 的 OCR 模型、自动更新开关、代理端口
 ---
 # llm-sight 配置
 
-运行配置命令并让用户确认：
+首次需要下载模型时：先问用户要哪个模型（候选：PP-OCRv6_medium 默认 / PP-OCRv6_tiny / PP-OCRv5_mobile / PP-OCRv5_server / PP-OCRv4_mobile）和是否走代理（空=直连），再跑：
+```bash
+py -3.12 "$HOME/.claude/skills/llm-sight/scripts/setup.py" install --model <模型名> [--proxy http://127.0.0.1:<端口>]
+```
+
+平时改配置则运行并让用户确认：
 
 ```bash
 py -3.12 "$HOME/.claude/skills/llm-sight/scripts/setup.py" config
