@@ -38,9 +38,9 @@ Common flags:
 | `--format json` | structured: texts + confidence scores + box coordinates | — |
 | `--device auto` | auto picks GPU when usable, else CPU | `auto` |
 
-The venv carries `paddlepaddle` + `paddleocr`; the model comes from
-`config.json` (default PP-OCRv6_medium). Missing package (exit 2)? Run
-`/llm-sight-status` then `setup.py install` once.
+The venv carries `paddlepaddle` + `paddleocr`; the model comes from `config.json`
+(default PP-OCRv6_medium). `.venv` missing? Run with system `python` instead
+(`python "<SKILL_DIR>/scripts/ocr.py"`) — it prints clear setup guidance.
 
 ## Setup & slash commands
 
@@ -74,8 +74,9 @@ Config is stored in `<SKILL_DIR>/config.json` (local only; not shipped).
    "<SKILL_DIR>/.venv/Scripts/python.exe" "<SKILL_DIR>/scripts/ocr.py" "<image>" --lang ch
    ```
    Add `--lang en` for English-dominant images, `--format json` for scores/positions.
-   Fresh install (`.venv` missing)? A bare `ocr.py` call fails with a confusing
-   "No such file or directory" — run `/llm-sight-status` → `setup.py install` first.
+   Fresh install or deps deleted (`.venv` gone)? Run `/llm-sight-status` →
+   `setup.py install` to rebuild, then retry. Model deleted? `ocr.py` prints
+   "模型未下载" → `/llm-sight-model` or `setup.py models add <name>`.
 3. **Treat stdout as the image's text** — OCR is imperfect: `0`↔`O`, `1`↔`l`;
    low-confidence lines (in `--format json`) may be wrong. Flag anything
    implausible instead of silently trusting it.
