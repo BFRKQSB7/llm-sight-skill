@@ -394,30 +394,29 @@ def cmd_install(args):
     system_python, ver = found
     eprint(f"[install] 使用系统 python {ver}")
     cfg = read_config()
+    mmap = load_models_map()
 
-    # 首次建 venv（pip 下载 ~1GB）前：确认代理（有配置用之，无则交互问/直连）
-    if not venv_ok():
-        if args.proxy is not None:
-            cfg["proxy"] = args.proxy or None
-            write_config(cfg)
-        elif not cfg.get("proxy") and sys.stdin.isatty():
+    # 1) 代理：一次询问，覆盖后续 pip 依赖与模型下载
+    if args.proxy is not None:
+        cfg["proxy"] = args.proxy or None
+        write_config(cfg)
+    elif not cfg.get("proxy"):
+        if sys.stdin.isatty():
             p = ask_proxy()
             if p:
                 cfg["proxy"] = p
                 write_config(cfg)
-        elif not cfg.get("proxy"):
-            eprint("[install] 未配置代理，pip 依赖下载直连；可用 --proxy 或 /llm-sight-config 配置")
-    ensure_venv(system_python, cfg.get("proxy"))
-    mmap = load_models_map()
+        else:
+            eprint("[install] 未配置代理，下载直连；可用 --proxy 或 /llm-sight-config 配置")
+    proxy = cfg.get("proxy")
 
-    # 首次引导：无论有无模型都弹——有模型问"用默认还是下其他"，无模型问下载哪个 + 代理
+    # 2) 模型选择：有模型问"用默认还是下其他"，无模型问下载哪个（代理已问过）
     if (SKILL_DIR / "models" / "official_models").exists():
-        if sys.stdin.isatty():
+        if sys.stdin.isatty() and not args.model:
             s = _readline(f"[install] 检测到已有模型。直接用默认 {cfg.get('model') or DEFAULT_CONFIG['model']}？"
                           "（y=用默认 / n=下载其他模型）: ").strip().lower()
             if s.startswith("n"):
-                if not args.model:
-                    args.model = ask_model(mmap, cfg.get("model") or DEFAULT_CONFIG["model"])
+                args.model = ask_model(mmap, cfg.get("model") or DEFAULT_CONFIG["model"])
         else:
             eprint("[install] 检测到已有模型，用当前默认；要下载其他模型用 setup.py models add <模型名> 或 /llm-sight-model")
     else:
@@ -428,15 +427,13 @@ def cmd_install(args):
             else:
                 print(f"[install] 未交互输入，用默认模型 {cfg.get('model') or DEFAULT_CONFIG['model']}"
                       f"（候选: {', '.join(mmap)}；想换用 setup.py install --model X）")
-        if args.proxy is None:
-            p = ask_proxy()
-            if p:
-                args.proxy = p
-            elif not sys.stdin.isatty():
-                eprint("[install] 未交互输入，模型下载直连；可用 setup.py install --proxy <地址> 走代理")
 
+    # 3) 装依赖（venv + pip，走上面确认的代理）
+    ensure_venv(system_python, proxy)
+
+    # 4) 装模型（走代理）
     ensure_models(cfg, model=args.model,
-                  proxy=args.proxy if args.proxy is not None else cfg.get("proxy"))
+                  proxy=args.proxy if args.proxy is not None else proxy)
     install_commands()
     print("[install] 完成。可用 /llm-sight-status 查看状态")
     return 0
