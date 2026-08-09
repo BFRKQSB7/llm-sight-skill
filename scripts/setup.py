@@ -146,15 +146,20 @@ def venv_ok():
         return False
 
 
-def ensure_venv(system_python):
+def ensure_venv(system_python, proxy=None):
     if venv_ok():
         eprint("[install] venv 已就绪，跳过构建")
         return
+    env = dict(os.environ)
+    if proxy:
+        for var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+            env[var] = proxy
+        eprint(f"[install] pip 依赖下载走代理 {proxy}")
     eprint("[install] 创建 venv（首次，需几分钟）")
     run([system_python, "-m", "venv", str(VENV_DIR)], check=True)
-    run([str(VENV_PY), "-m", "pip", "install", "--upgrade", "pip"], check=True)
+    run([str(VENV_PY), "-m", "pip", "install", "--upgrade", "pip"], check=True, env=env)
     eprint("[install] 安装 paddlepaddle + paddleocr（约 1GB，请耐心等待）")
-    run([str(VENV_PY), "-m", "pip", "install", "paddlepaddle", "paddleocr"], check=True)
+    run([str(VENV_PY), "-m", "pip", "install", "paddlepaddle", "paddleocr"], check=True, env=env)
     if not venv_ok():
         raise SystemExit("[install] venv 构建后 paddleocr 仍不可用")
 
@@ -388,8 +393,21 @@ def cmd_install(args):
         return 2
     system_python, ver = found
     eprint(f"[install] 使用系统 python {ver}")
-    ensure_venv(system_python)
     cfg = read_config()
+
+    # 首次建 venv（pip 下载 ~1GB）前：确认代理（有配置用之，无则交互问/直连）
+    if not venv_ok():
+        if args.proxy is not None:
+            cfg["proxy"] = args.proxy or None
+            write_config(cfg)
+        elif not cfg.get("proxy") and sys.stdin.isatty():
+            p = ask_proxy()
+            if p:
+                cfg["proxy"] = p
+                write_config(cfg)
+        elif not cfg.get("proxy"):
+            eprint("[install] 未配置代理，pip 依赖下载直连；可用 --proxy 或 /llm-sight-config 配置")
+    ensure_venv(system_python, cfg.get("proxy"))
     mmap = load_models_map()
 
     # 首次引导：无论有无模型都弹——有模型问"用默认还是下其他"，无模型问下载哪个 + 代理
@@ -417,7 +435,8 @@ def cmd_install(args):
             elif not sys.stdin.isatty():
                 eprint("[install] 未交互输入，模型下载直连；可用 setup.py install --proxy <地址> 走代理")
 
-    ensure_models(cfg, model=args.model, proxy=args.proxy)
+    ensure_models(cfg, model=args.model,
+                  proxy=args.proxy if args.proxy is not None else cfg.get("proxy"))
     install_commands()
     print("[install] 完成。可用 /llm-sight-status 查看状态")
     return 0
