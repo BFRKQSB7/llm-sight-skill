@@ -49,12 +49,9 @@ missing: run `/llm-sight-status` → `python "<SKILL_DIR>/scripts/setup.py" inst
 (builds `.venv`, ~1GB, downloads the model) → `/llm-sight-status` again. No
 Python? `setup.py` prints the download link — never auto-install Python yourself.
 
-On a first model download, **ask the user** before running `install`: which model
-(candidates: PP-OCRv6_medium 默认 / PP-OCRv6_tiny / PP-OCRv5_mobile /
-PP-OCRv5_server / PP-OCRv4_mobile) and whether to download through a proxy (e.g.
-`http://127.0.0.1:<端口>`; empty = download directly). Then run
-`setup.py install --model <X> --proxy <proxy>` (omit `--proxy` for direct). The
-chosen proxy is saved to config and reused by update checks.
+On a first model download, ask the user which model (PP-OCRv6_medium 默认 /
+PP-OCRv6_tiny / PP-OCRv5_mobile / PP-OCRv5_server / PP-OCRv4_mobile) and proxy
+(`http://127.0.0.1:<端口>`, empty = direct); then `setup.py install --model X --proxy Y`.
 
 | Command | Action |
 |---|---|
@@ -77,6 +74,8 @@ Config is stored in `<SKILL_DIR>/config.json` (local only; not shipped).
    "<SKILL_DIR>/.venv/Scripts/python.exe" "<SKILL_DIR>/scripts/ocr.py" "<image>" --lang ch
    ```
    Add `--lang en` for English-dominant images, `--format json` for scores/positions.
+   Fresh install (`.venv` missing)? A bare `ocr.py` call fails with a confusing
+   "No such file or directory" — run `/llm-sight-status` → `setup.py install` first.
 3. **Treat stdout as the image's text** — OCR is imperfect: `0`↔`O`, `1`↔`l`;
    low-confidence lines (in `--format json`) may be wrong. Flag anything
    implausible instead of silently trusting it.
