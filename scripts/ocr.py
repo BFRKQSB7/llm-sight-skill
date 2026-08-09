@@ -158,8 +158,8 @@ def main():
 
     # 模型未下载时绝不静默下载：先经用户确认（PaddleOCR 构造会自动下载，必须拦截）
     if not model_cached(model_name):
-        eprint(f"[ocr] 模型 {model_name} 未下载，下载需数百 MB，必须你确认。")
-        ans = _confirm(f"[ocr] 现在下载 {model_name} 吗？（y/N）: ")
+        eprint(f"[ocr] 模型 {model_name} 未下载。识别这张图片需要先有这个模型，首次需下载（数百 MB）。")
+        ans = _confirm(f"[ocr] 现在下载 {model_name} 吗？（y=下载 / N=取消，取消后图片无法识别）: ")
         if ans.startswith("y"):
             import subprocess
             r = subprocess.run(

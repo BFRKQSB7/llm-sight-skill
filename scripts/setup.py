@@ -56,11 +56,12 @@ def ask_model(mmap, default):
     """交互询问下载哪个模型；空输入/非交互返回 None（由调用方用默认）。"""
     if not sys.stdin.isatty():
         return None
-    print("未检测到 OCR 模型，请选择要下载的模型：")
+    print("需要下载一个 OCR 模型才能识别图片文字（首次一次性，每个约 100-300MB）。")
+    print("可选模型（默认 PP-OCRv6_medium，多数场景够用）：")
     for i, name in enumerate(mmap, 1):
         print(f"  {i}. {name} — {mmap[name].get('desc', '')}")
     while True:
-        s = _readline(f"选择（回车用默认 {default}）: ").strip()
+        s = _readline(f"输入编号或名称选择（回车用默认 {default}）: ").strip()
         if not s:
             return default
         if s.isdigit() and 1 <= int(s) <= len(mmap):
@@ -74,7 +75,10 @@ def ask_proxy():
     """交互询问代理地址；空回车=直连；非交互返回 None。"""
     if not sys.stdin.isatty():
         return None
-    s = _readline("代理地址（回车=直连，如 http://127.0.0.1:<端口>）: ").strip()
+    print("接下来要下载依赖（约 1GB）和 OCR 模型（数百 MB）。")
+    print("如果网络访问下载源（PyPI / HuggingFace）需要代理，请填代理地址；")
+    print("不需要则直接回车（直连下载）。代理地址会保存到本机 config，之后更新检查也用它。")
+    s = _readline("代理地址，格式如 http://127.0.0.1:<端口>（回车=直连）: ").strip()
     return s or None
 
 
@@ -413,8 +417,10 @@ def cmd_install(args):
     # 2) 模型选择：有模型问"用默认还是下其他"，无模型问下载哪个（代理已问过）
     if (SKILL_DIR / "models" / "official_models").exists():
         if sys.stdin.isatty() and not args.model:
-            s = _readline(f"[install] 检测到已有模型。直接用默认 {cfg.get('model') or DEFAULT_CONFIG['model']}？"
-                          "（y=用默认 / n=下载其他模型）: ").strip().lower()
+            s = _readline(
+                f"[install] 已装好 OCR 模型，当前默认是 {cfg.get('model') or DEFAULT_CONFIG['model']}。\n"
+                "[install] 直接用默认就行，还是要下载其他模型？（y=用默认 / n=下载其他模型）: "
+            ).strip().lower()
             if s.startswith("n"):
                 args.model = ask_model(mmap, cfg.get("model") or DEFAULT_CONFIG["model"])
         else:
