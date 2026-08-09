@@ -33,14 +33,30 @@ or fabricated content.
 
 ## Install
 
-1. Have Python 3.8–3.13 (`py -3.12` or `python`).
-2. Put the `llm-sight/` folder into `~/.claude/skills/` (pick V1 or V2).
-3. Bootstrap once before first use (`/llm-sight-status` to see what's missing,
+### Prerequisite: Python (3.8–3.13, 3.12 recommended)
+
+**Already have Python?** Skip this. Check with `python --version` or
+`py -3.12 --version`.
+
+**No Python yet?** Install it yourself (llm-sight won't, it only prompts):
+1. Open https://www.python.org/downloads/ and click the latest **3.12.x**
+   (on Windows pick *Windows installer (64-bit)*)
+2. During install **check "Add Python to PATH"**, then *Install Now*
+3. Open a new terminal; `python --version` showing a version means success
+
+### Install the skill
+
+1. Put the `llm-sight/` folder into `~/.claude/skills/` (pick V1 or V2).
+2. Bootstrap once before first use (`/llm-sight-status` to see what's missing,
    or directly):
    ```bash
    python ~/.claude/skills/llm-sight/scripts/setup.py install
    ```
-   With V2 the model-download step is skipped (models are bundled).
+   - **With Python**: builds venv, installs deps, downloads the model (**every
+     download asks you first**)
+   - **Without Python**: `setup.py` prints the official download link;
+     re-run after installing
+   - **V2**: models bundled — the model-download step is skipped
 
 ## Usage
 

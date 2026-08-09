@@ -39,8 +39,8 @@ Common flags:
 | `--device auto` | auto picks GPU when usable, else CPU | `auto` |
 
 The venv carries `paddlepaddle` + `paddleocr`; the model comes from
-`config.json` (default PP-OCRv6_medium). If the script reports a missing package
-(exit code 2), run `/llm-sight-status` then `setup.py install` once.
+`config.json` (default PP-OCRv6_medium). Missing package (exit 2)? Run
+`/llm-sight-status` then `setup.py install` once.
 
 ## Setup & slash commands
 
@@ -59,8 +59,13 @@ chosen proxy is saved to config and reused by update checks.
 | Command | Action |
 |---|---|
 | `/llm-sight-status` | show python / venv / models / config status |
+| `/llm-sight-model` | model manager menu: download / delete / set-default model |
 | `/llm-sight-config` | pick OCR model, toggle auto-update, set proxy / manifest URL |
 | `/llm-sight-update` | manually check for a newer OCR model |
+| `/llm-sight-help` | list all commands and their uses |
+
+On first use (config `help_hint` on, default), remind the user:
+`/llm-sight-help` 可查看所有可用命令。
 
 Config is stored in `<SKILL_DIR>/config.json` (local only; not shipped).
 
@@ -80,8 +85,7 @@ Config is stored in `<SKILL_DIR>/config.json` (local only; not shipped).
 
 ## Edge cases
 
-- **First run is slow** — a no-bundled-models release downloads the model on the
-  first call (minutes). Later runs are fast.
+- **First run is slow** — a no-bundled-models release downloads the model on the first call (minutes).
 - **`(no text detected)`** — genuinely no readable text; report it, suggest a
   cleaner/straighter image.
 - **Blurry/rotated text** — run anyway; PP-OCRv6 handles most photos. Heavily
@@ -92,5 +96,4 @@ Config is stored in `<SKILL_DIR>/config.json` (local only; not shipped).
 
 ## Troubleshooting
 
-Install, GPU, and error details live in `references/troubleshooting.md`. Read it
-when a run fails or before recommending an alternative inference engine.
+Install, GPU, and error details live in `references/troubleshooting.md` — read it when a run fails.

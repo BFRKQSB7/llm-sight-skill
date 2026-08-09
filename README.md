@@ -24,13 +24,25 @@
 
 ## 安装
 
-1. 有 Python 3.8–3.13（`py -3.12` 或 `python` 均可）
-2. 把 `llm-sight/` 目录放进 `~/.claude/skills/`（V1 或 V2 任选一个）
-3. 首次使用前运行一次引导（在 Claude Code 里 `/llm-sight-status` 查看缺什么，或直接）：
+### 前提：Python（3.8–3.13，推荐 3.12）
+
+**已经有 Python？** 跳过本节。检查：终端运行 `python --version` 或 `py -3.12 --version`。
+
+**还没有 Python？** 建议自己装一个（llm-sight 不替你装，只会提示）：
+1. 打开 https://www.python.org/downloads/ ，点最新的 **3.12.x**（Windows 选 *Windows installer (64-bit)*）
+2. 安装时**务必勾选 "Add Python to PATH"**，然后 *Install Now*
+3. 重开终端，`python --version` 能看到版本号即成功
+
+### 安装 skill
+
+1. 把 `llm-sight/` 目录放进 `~/.claude/skills/`（V1 或 V2 任选一个）
+2. 首次使用前运行引导（Claude Code 里 `/llm-sight-status` 看缺什么，或直接）：
    ```bash
    python ~/.claude/skills/llm-sight/scripts/setup.py install
    ```
-   V2 内置模型可跳过第 3 步的模型下载部分。
+   - **有 Python**：自动建 venv、装依赖、下载模型（**任何下载都会先询问你**）
+   - **无 Python**：`setup.py` 会打印官方下载链接，装好再跑一次
+   - **V2** 内置模型，可跳过模型下载部分
 
 ## 使用
 

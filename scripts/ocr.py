@@ -73,6 +73,27 @@ def model_params(name):
         return {}
 
 
+def model_cached(name):
+    """模型 det/rec 是否已下载到 skill/models/official_models。"""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json"), encoding="utf-8") as f:
+            params = json.load(f).get(name) or {}
+    except (OSError, json.JSONDecodeError):
+        return True
+    det = params.get("text_detection_model_name") or f"{name}_det"
+    rec = params.get("text_recognition_model_name") or f"{name}_rec"
+    base = os.path.join(SKILL_DIR, "models", "official_models")
+    return os.path.isdir(os.path.join(base, det)) and os.path.isdir(os.path.join(base, rec))
+
+
+def _confirm(prompt):
+    """询问用户；stdin 无数据（管道/EOF）返回空串，不崩。"""
+    try:
+        return input(prompt).strip().lower()
+    except (EOFError, OSError):
+        return ""
+
+
 def resolve_image(path, scratch):
     """Return a local file path. Downloads URLs into scratch dir."""
     if path.startswith(("http://", "https://")):
@@ -131,8 +152,29 @@ def main():
     # Warm up the pipeline lazily? No: PaddleOCR() constructor downloads models
     # on first use. That can take a while; tell the operator on stderr.
     cfg = load_config()
-    mp = model_params(cfg.get("model", "PP-OCRv6_medium"))
-    eprint(f"[ocr] device={device} engine={args.engine} lang={args.lang} model={cfg.get('model', 'PP-OCRv6_medium')}")
+    model_name = cfg.get("model", "PP-OCRv6_medium")
+    mp = model_params(model_name)
+    eprint(f"[ocr] device={device} engine={args.engine} lang={args.lang} model={model_name}")
+
+    # 模型未下载时绝不静默下载：先经用户确认（PaddleOCR 构造会自动下载，必须拦截）
+    if not model_cached(model_name):
+        eprint(f"[ocr] 模型 {model_name} 未下载，下载需数百 MB，必须你确认。")
+        ans = _confirm(f"[ocr] 现在下载 {model_name} 吗？（y/N）: ")
+        if ans.startswith("y"):
+            import subprocess
+            r = subprocess.run(
+                [sys.executable, os.path.join(skill_dir, "scripts", "setup.py"), "models", "add", model_name],
+                capture_output=True, text=True, timeout=1800,
+            )
+            if r.stdout:
+                print(r.stdout)
+            if r.stderr:
+                eprint(r.stderr)
+            if r.returncode != 0 or not model_cached(model_name):
+                sys.exit(4)
+        else:
+            eprint(f"[ocr] 取消下载。请用 /llm-sight-model 或 setup.py models add {model_name} 下载（会询问你）。")
+            sys.exit(4)
 
     try:
         ocr = PaddleOCR(

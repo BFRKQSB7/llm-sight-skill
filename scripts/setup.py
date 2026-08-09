@@ -28,6 +28,7 @@ PY_MIN, PY_MAX = (3, 8), (3, 14)  # paddle has no wheels for 3.14+
 DEFAULT_CONFIG = {
     "model": "PP-OCRv6_medium",
     "auto_update": True,
+    "help_hint": True,
     "proxy": None,
     "manifest_url": None,
     "last_check": None,
@@ -43,15 +44,23 @@ def load_models_map():
     return json.loads(MODELS_JSON.read_text(encoding="utf-8"))
 
 
+def _readline(prompt):
+    """input() 的健壮版：stdin 是 TTY 但无数据（管道/EOF）时返回空串，不崩。"""
+    try:
+        return input(prompt)
+    except (EOFError, OSError):
+        return ""
+
+
 def ask_model(mmap, default):
-    """交互询问下载哪个模型；非交互返回 None（由调用方用默认）。"""
+    """交互询问下载哪个模型；空输入/非交互返回 None（由调用方用默认）。"""
     if not sys.stdin.isatty():
         return None
     print("未检测到 OCR 模型，请选择要下载的模型：")
     for i, name in enumerate(mmap, 1):
         print(f"  {i}. {name} — {mmap[name].get('desc', '')}")
     while True:
-        s = input(f"选择（回车用默认 {default}）: ").strip()
+        s = _readline(f"选择（回车用默认 {default}）: ").strip()
         if not s:
             return default
         if s.isdigit() and 1 <= int(s) <= len(mmap):
@@ -65,7 +74,7 @@ def ask_proxy():
     """交互询问代理地址；空回车=直连；非交互返回 None。"""
     if not sys.stdin.isatty():
         return None
-    s = input("代理地址（回车=直连，如 http://127.0.0.1:<端口>）: ").strip()
+    s = _readline("代理地址（回车=直连，如 http://127.0.0.1:<端口>）: ").strip()
     return s or None
 
 
@@ -195,6 +204,127 @@ def ensure_models(config, force=False, model=None, proxy=None):
     write_config(config)
 
 
+def installed_models():
+    """{name: 是否已下载}——按 models.json 候选查 models/official_models/。"""
+    mmap = load_models_map()
+    out = {}
+    base = SKILL_DIR / "models" / "official_models"
+    for name, params in mmap.items():
+        det = params.get("text_detection_model_name") or f"{name}_det"
+        rec = params.get("text_recognition_model_name") or f"{name}_rec"
+        out[name] = (base / det).exists() and (base / rec).exists()
+    return out
+
+
+def model_table():
+    mmap = load_models_map()
+    cfg = read_config()
+    inst = installed_models()
+    rows = []
+    for name in mmap:
+        mark = "  [默认]" if name == cfg.get("model") else ""
+        st = "已安装" if inst[name] else "未安装"
+        rows.append(f"{name} [{st}]{mark} — {mmap[name].get('desc', '')}")
+    return rows
+
+
+def rm_model(name, cfg):
+    """删除某模型的缓存文件；若它是默认则回退默认。返回是否删除过。"""
+    mmap = load_models_map()
+    det = mmap[name].get("text_detection_model_name") or f"{name}_det"
+    rec = mmap[name].get("text_recognition_model_name") or f"{name}_rec"
+    base = SKILL_DIR / "models" / "official_models"
+    removed = False
+    for d in (det, rec):
+        p = base / d
+        if p.exists():
+            shutil.rmtree(p)
+            print(f"[models] 已删除 {d}")
+            removed = True
+    if name == cfg.get("model"):
+        cfg["model"] = DEFAULT_CONFIG["model"]
+        write_config(cfg)
+        print(f"[models] 默认模型已回退到 {DEFAULT_CONFIG['model']}")
+    if not removed:
+        print(f"[models] {name} 未安装，无需删除")
+    return removed
+
+
+def _models_menu():
+    mmap = load_models_map()
+    if not sys.stdin.isatty():
+        print("[models] 非交互，列出如下；命令: models list / set-default|add|rm <模型名>")
+        for r in model_table():
+            print(f"  {r}")
+        return 0
+    while True:
+        print("\n[models] 模型管理：")
+        for i, name in enumerate(mmap, 1):
+            print(f"  {i}. {model_table_inst(name)}")
+        print("操作: [s]设默认  [d]下载  [r]删除  [q]退出")
+        op = _readline("> ").strip().lower()
+        if op == "q" or not op:
+            return 0
+        if op not in ("s", "d", "r"):
+            print("无效操作")
+            continue
+        sel = _readline("输入模型编号: ").strip()
+        if not sel.isdigit() or not (1 <= int(sel) <= len(mmap)):
+            print("无效编号")
+            continue
+        name = list(mmap)[int(sel) - 1]
+        if op == "s":
+            cfg = read_config()
+            cfg["model"] = name
+            write_config(cfg)
+            print(f"[models] 默认模型已设为 {name}（未安装则下次 OCR 自动下载）")
+        elif op == "d":
+            cfg = read_config()
+            p = _readline("代理地址（回车=直连，如 http://127.0.0.1:<端口>）: ").strip() or None
+            ensure_models(cfg, model=name, proxy=p)
+        elif op == "r":
+            rm_model(name, read_config())
+
+
+def model_table_inst(name, idx=None):
+    mmap = load_models_map()
+    cfg = read_config()
+    inst = installed_models()
+    mark = "  [默认]" if name == cfg.get("model") else ""
+    st = "已安装" if inst[name] else "未安装"
+    prefix = f"{idx}. " if idx else ""
+    return f"{prefix}{name} [{st}]{mark} — {mmap[name].get('desc', '')}"
+
+
+def cmd_models(args):
+    mmap = load_models_map()
+    cfg = read_config()
+    if args.action == "list":
+        print("[models] 可用模型：")
+        for r in model_table():
+            print(f"  {r}")
+        print(f"[models] 当前默认: {cfg.get('model')}  proxy={cfg.get('proxy') or '无'}")
+        return 0
+    if args.name and args.name not in mmap:
+        print(f"[models] 未知模型 {args.name}。可用: {', '.join(mmap)}")
+        return 1
+    if args.action == "set-default":
+        cfg["model"] = args.name
+        write_config(cfg)
+        print(f"[models] 默认模型已设为 {args.name}（未安装则下次 OCR 自动下载）")
+        return 0
+    if args.action == "add":
+        ensure_models(cfg, model=args.name, proxy=args.proxy)
+        return 0
+    if args.action == "rm":
+        rm_model(args.name, cfg)
+        return 0
+    if args.action == "menu":
+        return _models_menu()
+    return 0
+
+
+
 def install_commands():
     if not COMMANDS_SRC.is_dir():
         eprint("[install] 无 commands/ 目录，跳过")
@@ -246,7 +376,8 @@ def cmd_check():
     print(f"[status] models: {'ok' if models_ok else '缺失'}")
     cfg = read_config()
     print(f"[status] config: model={cfg.get('model')} auto_update={cfg.get('auto_update')} "
-          f"proxy={cfg.get('proxy') or '无'} manifest_url={cfg.get('manifest_url') or '未配置'}")
+          f"help_hint={cfg.get('help_hint')} proxy={cfg.get('proxy') or '无'} "
+          f"manifest_url={cfg.get('manifest_url') or '未配置'}")
     return 0
 
 
@@ -261,8 +392,17 @@ def cmd_install(args):
     cfg = read_config()
     mmap = load_models_map()
 
-    # 首次无模型：询问下载哪个模型 + 是否走代理（非交互则用默认/直连）
-    if not (SKILL_DIR / "models" / "official_models").exists():
+    # 首次引导：无论有无模型都弹——有模型问"用默认还是下其他"，无模型问下载哪个 + 代理
+    if (SKILL_DIR / "models" / "official_models").exists():
+        if sys.stdin.isatty():
+            s = _readline(f"[install] 检测到已有模型。直接用默认 {cfg.get('model') or DEFAULT_CONFIG['model']}？"
+                          "（y=用默认 / n=下载其他模型）: ").strip().lower()
+            if s.startswith("n"):
+                if not args.model:
+                    args.model = ask_model(mmap, cfg.get("model") or DEFAULT_CONFIG["model"])
+        else:
+            eprint("[install] 检测到已有模型，用当前默认；要下载其他模型用 setup.py models add <模型名> 或 /llm-sight-model")
+    else:
         if not args.model:
             picked = ask_model(mmap, cfg.get("model") or DEFAULT_CONFIG["model"])
             if picked:
@@ -293,13 +433,16 @@ def cmd_config(args):
         cfg["model"] = args.model
     if args.auto_update is not None:
         cfg["auto_update"] = args.auto_update
+    if args.help_hint is not None:
+        cfg["help_hint"] = args.help_hint
     if args.proxy is not None:
         cfg["proxy"] = args.proxy or None
     if args.manifest_url is not None:
         cfg["manifest_url"] = args.manifest_url or None
     write_config(cfg)
     print(f"[config] model={cfg['model']} auto_update={cfg['auto_update']} "
-          f"proxy={cfg.get('proxy') or '无'} manifest_url={cfg.get('manifest_url') or '未配置'}")
+          f"help_hint={cfg.get('help_hint')} proxy={cfg.get('proxy') or '无'} "
+          f"manifest_url={cfg.get('manifest_url') or '未配置'}")
     return 0
 
 
@@ -318,8 +461,15 @@ def main():
     p = sub.add_parser("config", help="查看/修改配置")
     p.add_argument("--model")
     p.add_argument("--auto-update", type=lambda s: s.lower() in ("1", "true", "on", "yes"))
+    p.add_argument("--help-hint", type=lambda s: s.lower() in ("1", "true", "on", "yes"),
+                   help="大模型用 skill 时是否提醒 /llm-sight-help（默认 on）")
     p.add_argument("--proxy", help="代理地址，如 http://127.0.0.1:<端口>（空串清除）")
     p.add_argument("--manifest-url", help="更新清单 URL（空串清除）")
+    m = sub.add_parser("models", help="模型管理")
+    m.add_argument("action", choices=("list", "set-default", "add", "rm", "menu"),
+                   nargs="?", default="menu")
+    m.add_argument("name", nargs="?")
+    m.add_argument("--proxy", help="下载代理地址，如 http://127.0.0.1:<端口>（不给则直连）")
     sub.add_parser("update", help="检查模型更新（手动触发）")
     args = ap.parse_args()
 
@@ -333,6 +483,8 @@ def main():
         return cmd_install(args)
     if args.cmd == "config":
         return cmd_config(args)
+    if args.cmd == "models":
+        return cmd_models(args)
     if args.cmd == "update":
         return cmd_update()
     return 0
