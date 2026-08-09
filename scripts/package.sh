@@ -13,10 +13,10 @@ DIST="${2:-$REPO_ROOT/dist}"
 
 STAGE_ROOT="$(mktemp -d)"
 STAGE="$STAGE_ROOT/llm-sight"
-mkdir -p "$DIST"
+mkdir -p "$STAGE" "$DIST"
 
 # 用 git 选文件（只含跟踪文件），再 python zipfile 打包（跨平台，无外部 zip 依赖）
-git archive --format=tar HEAD | tar -x -C "$STAGE_ROOT"
+git archive --format=tar HEAD | tar -x -C "$STAGE"
 
 build_zip() {
   local root="$1" out="$2"

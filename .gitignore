@@ -5,3 +5,4 @@ models/
 tmp/
 __pycache__/
 *.pyc
+dist/
