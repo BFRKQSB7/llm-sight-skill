@@ -345,8 +345,9 @@ def ask_model(mmap, default):
     if not sys.stdin.isatty():
         return None
     print("需要下载一个 OCR 模型才能识别图片文字（首次一次性）。可选：")
+    inst = installed_models()
     for i, name in enumerate(mmap, 1):
-        print(f"  {i}. {model_line(name)}")
+        print(f"  {i}. {model_line(name, inst=inst)}")
     while True:
         s = _readline(f"输入编号或名称选择（回车用默认 {default}）: ").strip()
         if not s:
@@ -561,14 +562,16 @@ def _config_interactive_panel():
             print("[config] 已安装的模型（可删除）：")
             for i, n in enumerate(inst, 1):
                 m = mmap[n]
-                print(f"  {i}. {n} — {m['size_mb']}MB · 识别率 det {m['det_hmean']}%/rec {m['rec_acc']}%")
+                print(f"  {i}. {n} — {m['size_mb']}MB · 识别率 det {m['det_hmean']}%/rec "
+                      f"{m['rec_acc']}% · 语言 {m.get('langs', '?')}")
             sel = _readline("输入编号删除（回车=取消）: ").strip()
             if sel.isdigit() and 1 <= int(sel) <= len(inst):
                 rm_model(inst[int(sel) - 1], read_config())
         elif op == "s":
-            print("[config] 设默认：")
+            print("[config] 设默认（体积 · 支持语言）：")
             for i, n in enumerate(mmap, 1):
-                print(f"  {i}. {n}")
+                m = mmap[n]
+                print(f"  {i}. {n} — {m['size_mb']}MB · 语言 {m.get('langs', '?')}")
             sel = _readline("输入编号（回车=取消）: ").strip()
             if sel.isdigit() and 1 <= int(sel) <= len(mmap):
                 name = list(mmap)[int(sel) - 1]
@@ -774,9 +777,10 @@ def _models_menu():
         return 0
     while True:
         cfg = read_config()
+        inst = installed_models()
         print("\n[models] 模型管理：")
         for i, name in enumerate(mmap, 1):
-            print(f"  {i}. {model_line(name, cfg)}")
+            print(f"  {i}. {model_line(name, cfg, inst)}")
         print("操作: [s]设默认(CPU+GPU)  [c]设CPU默认  [g]设GPU默认  [d]下载  [r]删除  [q]退出")
         op = _readline("> ").strip().lower()
         if op == "q" or not op:
