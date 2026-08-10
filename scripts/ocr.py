@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract text from an image using PaddleOCR.
+"""Extract text from an image using rapidocr (PP-OCRv6 ONNX + onnxruntime).
 
 Designed for non-multimodal LLMs: one command in, plain text out.
 
@@ -7,33 +7,31 @@ Usage:
     python ocr.py <image_path_or_url> [more images...] [options]
 
 Options:
-    --lang <code>     OCR language. Default: ch (covers Chinese + Latin scripts
-                      via the PP-OCRv6 50-language model). Common: en, japan,
-                      korean, chinese_cht, french, german, ru, arabic.
+    --lang <code>     ch (default, covers Chinese + English), en, chinese_cht,
+                      japan. v6 模型仅支持这 4 种语言；其他语言（如 korean）需
+                      切换 v4/v5 模型（/llm-sight-model）。
     --format <fmt>    text | json. Default: text (one recognized line per line).
-    --device <dev>    auto | cpu | gpu[:n]. Default: auto (GPU if usable, else CPU).
-    --engine <eng>    paddle | onnxruntime | transformers. Default: paddle.
+    --device <dev>    auto | cpu | gpu. Default: auto (gpu if usable, else cpu).
     --scratch <dir>   Where to put downloaded URL images. Default: skill's tmp/.
     --quiet           Suppress progress/status messages to stderr.
 
 Exit codes:
     0  success (text may be empty)
-    2  paddleocr not installed
+    2  rapidocr not installed
     3  image file/URL unreachable or unreadable
     4  OCR runtime error
 """
 import argparse
+import importlib.metadata
 import json
 import os
+import subprocess
 import sys
-import tempfile
 import urllib.request
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# Keep ALL of PaddleOCR's working files inside the skill directory:
-# model downloads/cache land in <skill>/models instead of ~/.paddlex.
-os.environ.setdefault("PADDLE_PDX_CACHE_HOME", os.path.join(SKILL_DIR, "models"))
+MODEL_ROOT = os.path.join(SKILL_DIR, "models", "rapidocr")
+CLS_FILE = "ch_ppocr_mobile_v2.0_cls_mobile.onnx"
 
 # Force UTF-8 on stdout/stderr. On Windows, redirected output otherwise uses
 # the ANSI codepage (e.g. cp936), which mangles Chinese text for any consumer
@@ -42,9 +40,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-# Quiet the noisy Paddle/PaddleOCR INFO logs so stdout stays clean.
+# Quiet the noisy RapidOCR logs so stdout stays clean.
 import logging
-for name in ("paddle", "ppocr", "paddlex", "deploy", "profiler"):
+for name in ("rapidocr", "onnxruntime", "onnx"):
     logging.getLogger(name).setLevel(logging.WARNING)
 
 
@@ -52,38 +50,96 @@ def eprint(msg):
     print(msg, file=sys.stderr)
 
 
+DEFAULT_CONFIG = {
+    "model_cpu": "PP-OCRv6_small",
+    "model_gpu": "PP-OCRv6_medium",
+    "gpu": False,
+    "gpu_capable": False,
+    "auto_update": True,
+}
+
+
 def load_config():
-    """Read user config (model choice, auto_update). Defaults if absent."""
-    cfg = {"model": "PP-OCRv6_medium", "auto_update": True}
+    cfg = dict(DEFAULT_CONFIG)
     try:
         with open(os.path.join(SKILL_DIR, "config.json"), encoding="utf-8") as f:
             cfg.update(json.load(f))
     except (OSError, json.JSONDecodeError):
         pass
+    # 兼容旧版单一 model 字段（迁移到 model_cpu / model_gpu）
+    if "model" in cfg and cfg.get("model"):
+        if not cfg.get("model_cpu"):
+            cfg["model_cpu"] = cfg["model"]
+        if not cfg.get("model_gpu"):
+            cfg["model_gpu"] = cfg["model"]
+        cfg.pop("model", None)
     return cfg
 
 
-def model_params(name):
-    """Resolve a model name to PaddleOCR() kwargs via models.json."""
+def write_config(cfg):
     try:
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json"), encoding="utf-8") as f:
-            entry = json.load(f).get(name) or {}
-        return {k: v for k, v in entry.items() if k != "desc" and v is not None}
+        with open(os.path.join(SKILL_DIR, "config.json"), "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+
+
+def model_params(name):
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json"),
+                  encoding="utf-8") as f:
+            return json.load(f).get(name) or {}
     except (OSError, json.JSONDecodeError):
         return {}
 
 
 def model_cached(name):
-    """模型 det/rec 是否已下载到 skill/models/official_models。"""
-    try:
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json"), encoding="utf-8") as f:
-            params = json.load(f).get(name) or {}
-    except (OSError, json.JSONDecodeError):
+    mp = model_params(name)
+    if not mp.get("det_file"):
         return True
-    det = params.get("text_detection_model_name") or f"{name}_det"
-    rec = params.get("text_recognition_model_name") or f"{name}_rec"
-    base = os.path.join(SKILL_DIR, "models", "official_models")
-    return os.path.isdir(os.path.join(base, det)) and os.path.isdir(os.path.join(base, rec))
+    files = [mp.get("det_file"), mp.get("rec_file"), CLS_FILE]
+    return all(f and os.path.isfile(os.path.join(MODEL_ROOT, f)) for f in files)
+
+
+def gpu_hardware_capable():
+    """符合要求的显卡判定：能创建硬件 D3D11 设备（现代显卡皆满足，隐含 DX12）。
+    不依赖 onnxruntime-directml 包——模块删了也能判定硬件是否支持。"""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        d3d11 = ctypes.WinDLL("d3d11.dll")
+        d3d11.D3D11CreateDevice.restype = ctypes.c_long
+        device = ctypes.c_void_p()
+        ctx = ctypes.c_void_p()
+        fl = ctypes.c_uint(0xB000)  # D3D_FEATURE_LEVEL_11_0
+        hr = d3d11.D3D11CreateDevice(
+            None, 1, 0, 0, ctypes.byref(fl), 1, 7,
+            ctypes.byref(device), None, ctypes.byref(ctx))
+        return hr == 0
+    except Exception:
+        return False
+
+
+def gpu_module_installed():
+    try:
+        importlib.metadata.distribution("onnxruntime-directml")
+        return True
+    except importlib.metadata.PackageNotFoundError:
+        return False
+
+
+def sync_gpu_capable(cfg):
+    """每次运行检测硬件 D3D12 能力并同步 config 的 gpu_capable（首次调用落盘）。"""
+    capable = gpu_hardware_capable()
+    if cfg.get("gpu_capable") != capable:
+        cfg["gpu_capable"] = capable
+        write_config(cfg)
+    if not capable and gpu_module_installed():
+        eprint("[ocr] 检测到本机无法使用 GPU 加速，但已安装 GPU 模块（约占 150MB）。")
+        eprint("[ocr] 建议删除模块释放空间；更换支持 DirectML 的设备后再重新下载：")
+        eprint('[ocr]   /llm-sight-config --gpu-module remove')
+    return capable
 
 
 def _confirm(prompt):
@@ -110,102 +166,116 @@ def resolve_image(path, scratch):
     return path
 
 
+def download_model(model_name, cfg):
+    """下载所选模型（经用户确认后调用 setup.py models add）。"""
+    import subprocess as sp
+    cmd = [sys.executable, os.path.join(SKILL_DIR, "scripts", "setup.py"), "models", "add", model_name]
+    if cfg.get("proxy"):
+        cmd += ["--proxy", cfg["proxy"]]
+    r = sp.run(cmd, capture_output=True, text=True, timeout=1800)
+    if r.stdout:
+        print(r.stdout)
+    if r.stderr:
+        eprint(r.stderr)
+    return r.returncode == 0 and model_cached(model_name)
+
+
 def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("images", nargs="+", help="image path(s) or URL(s)")
     ap.add_argument("--lang", default="ch")
     ap.add_argument("--format", choices=("text", "json"), default="text")
     ap.add_argument("--device", default="auto")
-    ap.add_argument("--engine", default="paddle")
     ap.add_argument("--scratch", default=None)
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
     if args.quiet:
-        for name in ("paddle", "ppocr", "paddlex", "deploy", "profiler"):
+        for name in ("rapidocr", "onnxruntime", "onnx"):
             logging.getLogger(name).setLevel(logging.ERROR)
 
-    skill_dir = SKILL_DIR
-    scratch = args.scratch or os.path.join(skill_dir, "tmp")
+    scratch = args.scratch or os.path.join(SKILL_DIR, "tmp")
 
     try:
-        from paddleocr import PaddleOCR
-        import paddle
+        from rapidocr import RapidOCR
+        from rapidocr.utils.typings import LangRec, ModelType, OCRVersion
     except ImportError:
         eprint(
-            "[ocr] paddleocr 未安装。请先运行引导（一次）：\n"
-            f'[ocr]   "{os.path.join(skill_dir, ".venv", "Scripts", "python.exe")}" scripts/setup.py install\n'
+            "[ocr] rapidocr 未安装。请先运行引导（一次）：\n"
+            f'[ocr]   "{os.path.join(SKILL_DIR, ".venv", "Scripts", "python.exe")}" scripts/setup.py install\n'
             "[ocr] 或在 Claude Code 里 /llm-sight-status 查看环境、/llm-sight-config 配置后重试。"
         )
         sys.exit(2)
 
-    # Resolve device: auto = gpu when the build actually has usable CUDA.
-    device = args.device
-    if device == "auto":
-        device = "cpu"
-        try:
-            if paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
-                device = "gpu"
-        except Exception:
-            pass
-
-    # Warm up the pipeline lazily? No: PaddleOCR() constructor downloads models
-    # on first use. That can take a while; tell the operator on stderr.
     cfg = load_config()
-    model_name = cfg.get("model", "PP-OCRv6_medium")
-    mp = model_params(model_name)
-    eprint(f"[ocr] device={device} engine={args.engine} lang={args.lang} model={model_name}")
+    capable = sync_gpu_capable(cfg)  # 硬件是否支持 DirectX12
+    module = gpu_module_installed()
+    gpu_usable = capable and module
 
-    # 模型未下载时绝不静默下载：先经用户确认（PaddleOCR 构造会自动下载，必须拦截）
+    # 解析活动设备
+    use_gpu = cfg.get("gpu", False) and gpu_usable
+    if args.device == "cpu":
+        use_gpu = False
+    elif args.device == "gpu":
+        use_gpu = gpu_usable
+        if not gpu_usable:
+            eprint("[ocr] GPU 不可用（硬件不支持或未装 GPU 模块），回落 CPU。")
+    if cfg.get("gpu", False) and not gpu_usable:
+        eprint("[ocr] config 里启用了 GPU 但当前不可用（缺模块或硬件不支持），本次回落 CPU。")
+
+    # 批量识别：GPU 模块已装且硬件支持但未启用 → 询问本次是否启用
+    if not use_gpu and gpu_usable and len(args.images) > 1:
+        ans = _confirm(
+            f"[ocr] 批量识别 {len(args.images)} 张图。是否本次启用 GPU 加速（更快）？(y/N): "
+        )
+        if ans.startswith("y"):
+            use_gpu = True
+
+    # 模型按活动设备选（CPU/GPU 各自独立配置）
+    model_name = cfg.get("model_gpu" if use_gpu else "model_cpu") or (
+        DEFAULT_CONFIG["model_gpu"] if use_gpu else DEFAULT_CONFIG["model_cpu"]
+    )
+    mp = model_params(model_name)
+
+    eprint(f"[ocr] device={'gpu' if use_gpu else 'cpu'} lang={args.lang} model={model_name}")
+
+    # 模型未下载时绝不静默下载：先经用户确认
     if not model_cached(model_name):
-        eprint(f"[ocr] 模型 {model_name} 未下载。识别这张图片需要先有这个模型，首次需下载（数百 MB）。")
+        eprint(
+            f"[ocr] 模型 {model_name} 未下载（体积 {mp.get('size_mb')}MB，识别精度 "
+            f"det {mp.get('det_hmean')}/rec {mp.get('rec_acc')}）。识别需要这个模型。"
+        )
         ans = _confirm(f"[ocr] 现在下载 {model_name} 吗？（y=下载 / N=取消，取消后图片无法识别）: ")
         if ans.startswith("y"):
-            import subprocess
-            r = subprocess.run(
-                [sys.executable, os.path.join(skill_dir, "scripts", "setup.py"), "models", "add", model_name],
-                capture_output=True, text=True, timeout=1800,
-            )
-            if r.stdout:
-                print(r.stdout)
-            if r.stderr:
-                eprint(r.stderr)
-            if r.returncode != 0 or not model_cached(model_name):
+            if not download_model(model_name, cfg):
                 sys.exit(4)
         else:
-            eprint(f"[ocr] 取消下载。请用 /llm-sight-model 或 setup.py models add {model_name} 下载（会询问你）。")
+            eprint(f"[ocr] 取消下载。可用 /llm-sight-model 或 setup.py models add {model_name} 下载（会询问你）。")
             sys.exit(4)
 
+    # 构建 rapidocr 参数（枚举值）
     try:
-        ocr = PaddleOCR(
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-            lang=args.lang,
-            device=device,
-            engine=args.engine,
-            # paddle 3.x CPU + oneDNN hits a PIR-executor bug
-            # (ConvertPirAttribute2RuntimeAttribute on DoubleAttribute);
-            # disabling MKLDNN routes around it. GPU is unaffected.
-            enable_mkldnn=False,
-            **mp,
-        )
+        params = {
+            "Global.model_root_dir": MODEL_ROOT,
+            "Det.ocr_version": OCRVersion(mp["ocr_version"]),
+            "Det.model_type": ModelType(mp["model_type"]),
+            "Rec.ocr_version": OCRVersion(mp["ocr_version"]),
+            "Rec.model_type": ModelType(mp["model_type"]),
+            "Rec.lang_type": LangRec(args.lang),
+            "EngineConfig.onnxruntime.use_dml": use_gpu,
+        }
+    except (KeyError, ValueError) as exc:
+        eprint(f"[ocr] 模型 {model_name} 或语言 {args.lang} 无效: {exc}")
+        sys.exit(4)
+
+    try:
+        engine = RapidOCR(params=params)
     except Exception as exc:
-        eprint(f"[ocr] failed to initialize PaddleOCR: {exc}")
-        if cfg.get("auto_update"):
-            eprint("[ocr] 初始化失败，尝试自动检查模型更新...")
-            try:
-                import subprocess
-                r = subprocess.run(
-                    [sys.executable, os.path.join(skill_dir, "scripts", "setup.py"), "update"],
-                    capture_output=True, text=True, timeout=120,
-                )
-                if r.stdout.strip():
-                    eprint(r.stdout.strip())
-            except Exception:
-                pass
-        else:
-            eprint("[ocr] 可运行 /llm-sight-update 手动检查模型更新")
+        msg = str(exc)
+        if "lang_type" in msg and mp.get("ocr_version", "").startswith("PP-OCRv6"):
+            eprint(f"[ocr] {model_name}（v6）仅支持语言: ch / en / chinese_cht / japan。")
+            eprint("[ocr] 其他语言（如 korean）需切换 v4/v5 模型：/llm-sight-model")
+        eprint(f"[ocr] 初始化失败: {msg}")
         sys.exit(4)
 
     results = []
@@ -213,24 +283,15 @@ def main():
         try:
             local = resolve_image(img, scratch)
             eprint(f"[ocr] recognizing: {img}")
-            ocr_results = ocr.predict(local)
+            res = engine(local)
+            texts = list(res.txts) if getattr(res, "txts", None) else []
+            scores = [float(s) for s in (getattr(res, "scores", None) or ())]
+            boxes = res.boxes.tolist() if getattr(res, "boxes", None) is not None else []
+            results.append({"image": img, "texts": texts, "scores": scores, "boxes": boxes})
         except Exception as exc:
-            if not isinstance(exc, RuntimeError) and not args.images:
-                raise
             eprint(f"[ocr] error on {img}: {exc}")
             results.append({"image": img, "error": str(exc)})
             continue
-
-        for res in ocr_results:
-            texts = list(res.get("rec_texts", []))
-            scores = [float(s) for s in res.get("rec_scores", [])]
-            boxes = [
-                [[int(round(float(c))) for c in pt] for pt in poly]
-                for poly in res.get("rec_polys", [])
-            ]
-            results.append(
-                {"image": img, "texts": texts, "scores": scores, "boxes": boxes}
-            )
 
     if args.format == "json":
         print(json.dumps(results, ensure_ascii=False, indent=2))

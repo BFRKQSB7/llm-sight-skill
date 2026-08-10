@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# 打包 llm-sight 两个版本：
-#   v1 = git 跟踪文件（无内置模型）
-#   v2 = v1 + models/（内置 OCR 模型，唯一区别）
-# 用法: bash scripts/package.sh <运行时skill目录(含 models/)> [输出目录，默认 dist]
+# 打包 llm-sight 三个版本：
+#   _lite     = git 跟踪文件（无内置模型，setup 首次联网下载）
+#   _standard = _lite + v6 small 模型（CPU 默认，开箱即用）
+#   _full     = _standard + v6 medium 模型 + gpu_module.marker（GPU 默认 + 默认装 DirectML）
+# 用法: bash scripts/package.sh <运行时skill目录(含 models/rapidocr/)> [输出目录，默认 dist]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,14 +33,34 @@ print("wrote", out)
 PY
 }
 
-build_zip "$STAGE" "$DIST/llm-sight-v1-$VERSION.zip"
+CLS="ch_ppocr_mobile_v2.0_cls_mobile.onnx"
+SMALL_DET="PP-OCRv6_det_small.onnx"; SMALL_REC="PP-OCRv6_rec_small.onnx"
+MEDIUM_DET="PP-OCRv6_det_medium.onnx"; MEDIUM_REC="PP-OCRv6_rec_medium.onnx"
+RAPID="$MODELS_SRC/models/rapidocr"
 
-if [ -n "$MODELS_SRC" ] && [ -d "$MODELS_SRC/models/official_models" ]; then
-  mkdir -p "$STAGE/models"
-  cp -r "$MODELS_SRC/models/official_models" "$STAGE/models/"
-  build_zip "$STAGE" "$DIST/llm-sight-v2-$VERSION.zip"
+copy_models() {
+  mkdir -p "$STAGE/models/rapidocr"
+  for f in "$@"; do
+    if [ ! -f "$RAPID/$f" ]; then
+      echo "WARN: 缺模型文件 $f，跳过"
+      continue
+    fi
+    cp "$RAPID/$f" "$STAGE/models/rapidocr/"
+  done
+}
+
+build_zip "$STAGE" "$DIST/llm-sight-${VERSION}_lite.zip"
+
+if [ -n "$MODELS_SRC" ] && [ -d "$RAPID" ]; then
+  # _standard: 只带 v6 small（CPU 默认模型）
+  copy_models "$CLS" "$SMALL_DET" "$SMALL_REC"
+  build_zip "$STAGE" "$DIST/llm-sight-${VERSION}_standard.zip"
+  # _full: 再加 v6 medium（GPU 默认模型）+ marker
+  copy_models "$MEDIUM_DET" "$MEDIUM_REC"
+  touch "$STAGE/gpu_module.marker"
+  build_zip "$STAGE" "$DIST/llm-sight-${VERSION}_full.zip"
 else
-  echo "WARN: 未提供 models 目录（或 models/official_models 缺失），v2 跳过"
+  echo "WARN: 未提供 models/rapidocr 目录，standard/full 跳过"
 fi
 
 rm -rf "$STAGE_ROOT"

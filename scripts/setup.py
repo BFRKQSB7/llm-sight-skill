@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""llm-sight 环境引导器：check / install / config / update。
+"""llm-sight 环境引导器：check / install / config / models / update。
 
 用系统 python 跑（纯 stdlib，零依赖）。skill 的 .venv 是依赖载体，由本脚本构建。
-所有 OCR 工作文件（venv/models/config/tmp）都在 skill 目录内。
+引擎 = rapidocr（PP-OCRv6 ONNX + onnxruntime）；GPU 加速 = onnxruntime-directml
+（DirectML），可选模块。所有 OCR 工作文件（venv/models/config/tmp）都在 skill 目录内。
 """
 import argparse
 import json
@@ -19,14 +20,22 @@ VENV_DIR = SKILL_DIR / ".venv"
 VENV_PY = VENV_DIR / "Scripts" / "python.exe" if os.name == "nt" else VENV_DIR / "bin" / "python"
 CONFIG = SKILL_DIR / "config.json"
 MODELS_JSON = Path(__file__).resolve().parent / "models.json"
+MODEL_ROOT = SKILL_DIR / "models" / "rapidocr"
+CLS_FILE = "ch_ppocr_mobile_v2.0_cls_mobile.onnx"
+GPU_MARKER = SKILL_DIR / "gpu_module.marker"  # _full 版本带此标记 → setup 默认装 DirectML
 COMMANDS_SRC = Path(__file__).resolve().parent.parent / "commands"
 COMMANDS_DST = Path(os.environ.get("USERPROFILE") or os.path.expanduser("~")) / ".claude" / "commands"
 
 PY_DOWNLOAD_URL = "https://www.python.org/downloads/"
-PY_MIN, PY_MAX = (3, 8), (3, 14)  # paddle has no wheels for 3.14+
+PY_MIN, PY_MAX = (3, 8), (3, 14)
+
+GPU_MODULE_SIZE_MB = 150  # onnxruntime-directml 约 150MB（实际随包）
 
 DEFAULT_CONFIG = {
-    "model": "PP-OCRv6_medium",
+    "model_cpu": "PP-OCRv6_small",
+    "model_gpu": "PP-OCRv6_medium",
+    "gpu": False,
+    "gpu_capable": False,
     "auto_update": True,
     "help_hint": True,
     "proxy": None,
@@ -52,36 +61,6 @@ def _readline(prompt):
         return ""
 
 
-def ask_model(mmap, default):
-    """交互询问下载哪个模型；空输入/非交互返回 None（由调用方用默认）。"""
-    if not sys.stdin.isatty():
-        return None
-    print("需要下载一个 OCR 模型才能识别图片文字（首次一次性，每个约 100-300MB）。")
-    print("可选模型（默认 PP-OCRv6_medium，多数场景够用）：")
-    for i, name in enumerate(mmap, 1):
-        print(f"  {i}. {name} — {mmap[name].get('desc', '')}")
-    while True:
-        s = _readline(f"输入编号或名称选择（回车用默认 {default}）: ").strip()
-        if not s:
-            return default
-        if s.isdigit() and 1 <= int(s) <= len(mmap):
-            return list(mmap)[int(s) - 1]
-        if s in mmap:
-            return s
-        print("无效，重试")
-
-
-def ask_proxy():
-    """交互询问代理地址；空回车=直连；非交互返回 None。"""
-    if not sys.stdin.isatty():
-        return None
-    print("接下来要下载依赖（约 1GB）和 OCR 模型（数百 MB）。")
-    print("如果网络访问下载源（PyPI / HuggingFace）需要代理，请填代理地址；")
-    print("不需要则直接回车（直连下载）。代理地址会保存到本机 config，之后更新检查也用它。")
-    s = _readline("代理地址，格式如 http://127.0.0.1:<端口>（回车=直连）: ").strip()
-    return s or None
-
-
 def read_config():
     cfg = dict(DEFAULT_CONFIG)
     if CONFIG.exists():
@@ -89,6 +68,13 @@ def read_config():
             cfg.update(json.loads(CONFIG.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError) as e:
             eprint(f"[config] 读取 config.json 失败（用默认）: {e}")
+    # 兼容旧版单一 model 字段
+    if cfg.get("model"):
+        if not cfg.get("model_cpu"):
+            cfg["model_cpu"] = cfg["model"]
+        if not cfg.get("model_gpu"):
+            cfg["model_gpu"] = cfg["model"]
+        cfg.pop("model", None)
     return cfg
 
 
@@ -101,6 +87,17 @@ def run(cmd, **kw):
     eprint("[run] " + " ".join(str(c) for c in cmd))
     return subprocess.run(cmd, **kw)
 
+
+def proxied_env(proxy):
+    env = dict(os.environ)
+    if proxy:
+        for var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+            env[var] = proxy
+        eprint(f"[net] 网络走代理 {proxy}")
+    return env
+
+
+# ---------- python / venv ----------
 
 def find_python():
     """Return a usable system python, or None. Order: skill venv first, then system."""
@@ -143,196 +140,267 @@ def venv_ok():
     if not VENV_PY.exists():
         return False
     try:
-        r = subprocess.run([str(VENV_PY), "-c", "import paddleocr;print(paddleocr.__version__)"],
+        r = subprocess.run([str(VENV_PY), "-c", "import rapidocr", ],
                            capture_output=True, text=True, timeout=60)
         return r.returncode == 0
     except subprocess.SubprocessError:
         return False
 
 
-def ensure_venv(system_python, proxy=None):
+def gpu_hardware_capable():
+    """符合要求的显卡判定：能创建硬件 D3D11 设备（现代显卡皆满足，隐含 DX12）。
+    不依赖 onnxruntime-directml 包——删除模块后仍能检测，保证可重装。"""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        d3d11 = ctypes.WinDLL("d3d11.dll")
+        d3d11.D3D11CreateDevice.restype = ctypes.c_long
+        device = ctypes.c_void_p()
+        ctx = ctypes.c_void_p()
+        fl = ctypes.c_uint(0xB000)  # D3D_FEATURE_LEVEL_11_0
+        # pAdapter=NULL, DriverType=D3D_DRIVER_TYPE_HARDWARE(1), Flags=0,
+        # pFeatureLevels, FeatureLevels=1, SDKVersion=7, ppDevice, pFLOut=NULL, ppContext
+        hr = d3d11.D3D11CreateDevice(
+            None, 1, 0, 0, ctypes.byref(fl), 1, 7,
+            ctypes.byref(device), None, ctypes.byref(ctx))
+        return hr == 0
+    except Exception:
+        return False
+
+
+def venv_has_dml_module():
+    """venv 里是否装了 onnxruntime-directml。"""
+    if not VENV_PY.exists():
+        return False
+    try:
+        r = subprocess.run(
+            [str(VENV_PY), "-c",
+             "import importlib.metadata as m\n"
+             "m.distribution('onnxruntime-directml'); print('YES')"],
+            capture_output=True, text=True, timeout=60)
+        return "YES" in r.stdout
+    except subprocess.SubprocessError:
+        return False
+
+
+def venv_gpu_status():
+    """返回 (硬件符合要求, 模块已安装, DML 可用=两者皆真)。"""
+    capable = gpu_hardware_capable()
+    module = venv_has_dml_module()
+    return capable, module, (capable and module)
+
+
+def ensure_venv(system_python, proxy, want_gpu_module=False):
     if venv_ok():
         eprint("[install] venv 已就绪，跳过构建")
         return
-    env = dict(os.environ)
-    if proxy:
-        for var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
-            env[var] = proxy
-        eprint(f"[install] pip 依赖下载走代理 {proxy}")
+    env = proxied_env(proxy)
     eprint("[install] 创建 venv（首次，需几分钟）")
     run([system_python, "-m", "venv", str(VENV_DIR)], check=True)
     run([str(VENV_PY), "-m", "pip", "install", "--upgrade", "pip"], check=True, env=env)
-    eprint("[install] 安装 paddlepaddle + paddleocr（约 1GB，请耐心等待）")
-    run([str(VENV_PY), "-m", "pip", "install", "paddlepaddle", "paddleocr"], check=True, env=env)
+    if want_gpu_module:
+        eprint("[install] 安装 rapidocr + onnxruntime-directml（含 GPU 模块，约 450MB，请耐心等待）")
+        run([str(VENV_PY), "-m", "pip", "install", "rapidocr", "onnxruntime-directml"], check=True, env=env)
+    else:
+        eprint("[install] 安装 rapidocr + onnxruntime（约 300MB，请耐心等待）")
+        run([str(VENV_PY), "-m", "pip", "install", "rapidocr", "onnxruntime"], check=True, env=env)
     if not venv_ok():
-        raise SystemExit("[install] venv 构建后 paddleocr 仍不可用")
+        raise SystemExit("[install] venv 构建后 rapidocr 仍不可用")
 
 
-def ensure_models(config, force=False, model=None, proxy=None):
+def install_gpu_module(proxy):
+    """装 onnxruntime-directml（替换 onnxruntime）。返回是否成功。"""
+    if not VENV_PY.exists():
+        raise SystemExit("[gpu] 缺 venv，请先跑 install")
+    env = proxied_env(proxy)
+    eprint(f"[gpu] 安装 GPU 加速模块（onnxruntime-directml，约 {GPU_MODULE_SIZE_MB}MB）")
+    r = run([str(VENV_PY), "-m", "pip", "install", "onnxruntime-directml"], env=env)
+    if r.returncode != 0:
+        raise SystemExit("[gpu] 安装失败")
+    return True
+
+
+def remove_gpu_module(proxy):
+    """卸载 onnxruntime-directml，装回 onnxruntime（CPU）。"""
+    if not VENV_PY.exists():
+        raise SystemExit("[gpu] 缺 venv，请先跑 install")
+    env = proxied_env(proxy)
+    eprint("[gpu] 卸载 onnxruntime-directml，装回 onnxruntime（CPU）")
+    r = run([str(VENV_PY), "-m", "pip", "uninstall", "-y", "onnxruntime-directml"], env=env)
+    r2 = run([str(VENV_PY), "-m", "pip", "install", "onnxruntime"], env=env)
+    if r.returncode != 0 or r2.returncode != 0:
+        raise SystemExit("[gpu] 删除模块失败")
+
+
+# ---------- models ----------
+
+def model_cached(name):
     mmap = load_models_map()
-    name = model or config.get("model") or DEFAULT_CONFIG["model"]
+    m = mmap.get(name) or {}
+    if not m.get("det_file"):
+        return True
+    files = [m.get("det_file"), m.get("rec_file"), CLS_FILE]
+    return all(f and (MODEL_ROOT / f).exists() for f in files)
+
+
+def installed_models():
+    mmap = load_models_map()
+    return {name: model_cached(name) for name in mmap}
+
+
+def model_line(name, cfg=None, inst=None):
+    mmap = load_models_map()
+    m = mmap[name]
+    marks = []
+    if cfg:
+        if name == cfg.get("model_cpu"):
+            marks.append("CPU默认")
+        if name == cfg.get("model_gpu"):
+            marks.append("GPU默认")
+    tag = f" [{'/'.join(marks)}]" if marks else ""
+    st = "已装" if (inst is None or inst[name]) else "未装"
+    return (f"{name} [{st}]{tag} — {m['size_mb']}MB · "
+            f"精度 det {m['det_hmean']}/rec {m['rec_acc']} · {m['who']}")
+
+
+def model_table(cfg=None):
+    inst = installed_models()
+    return [model_line(name, cfg, inst) for name in load_models_map()]
+
+
+def ensure_models(cfg, name, proxy=None):
+    """下载指定模型到 models/rapidocr（warmup 触发 rapidocr 下载）。"""
+    mmap = load_models_map()
     if name not in mmap:
         raise SystemExit(f"[install] 未知模型: {name}（可用: {', '.join(mmap)}）")
-    if model:
-        config["model"] = model
     if proxy is not None:
-        config["proxy"] = proxy or None
-    if model or proxy is not None:
-        write_config(config)  # 改动即落盘，即使模型已存在（跳过下载）也保存
-    if not force and (SKILL_DIR / "models" / "official_models").exists():
-        eprint("[install] 模型已存在，跳过下载")
+        cfg["proxy"] = proxy or None
+        write_config(cfg)
+    if model_cached(name):
+        eprint(f"[models] {name} 已下载，跳过")
         return
     if not VENV_PY.exists():
-        raise SystemExit("[install] 缺 venv，请先跑 install 完成 venv 构建")
-    params = mmap[name]
+        raise SystemExit("[models] 缺 venv，请先跑 install")
+    m = mmap[name]
     snippet = (
         "import json,sys,os\n"
-        "os.environ['PADDLE_PDX_CACHE_HOME']=sys.argv[2]\n"
-        "from paddleocr import PaddleOCR\n"
-        "cfg=json.load(open(sys.argv[1],encoding='utf-8'))\n"
-        "PaddleOCR(use_doc_orientation_classify=False,use_doc_unwarping=False,"
-        "use_textline_orientation=False,device='cpu',**cfg)\n"
+        "from rapidocr import RapidOCR\n"
+        "from rapidocr.utils.typings import ModelType, OCRVersion, LangRec\n"
+        "p=json.load(open(sys.argv[1],encoding='utf-8'))\n"
+        "params={'Global.model_root_dir':sys.argv[2],\n"
+        " 'Det.ocr_version':OCRVersion(p['ocr_version']),'Det.model_type':ModelType(p['model_type']),\n"
+        " 'Rec.ocr_version':OCRVersion(p['ocr_version']),'Rec.model_type':ModelType(p['model_type']),\n"
+        " 'Rec.lang_type':LangRec('ch'),'EngineConfig.onnxruntime.use_dml':False}\n"
+        "RapidOCR(params=params)\n"
         "print('MODELS_OK')\n"
     )
     tmp = SKILL_DIR / "tmp"
     tmp.mkdir(exist_ok=True)
     job = tmp / "warmup.json"
-    job.write_text(json.dumps({k: v for k, v in params.items() if k != "desc"}, ensure_ascii=False), encoding="utf-8")
-    env = dict(os.environ)
-    if proxy:
-        for var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
-            env[var] = proxy
-        eprint(f"[install] 模型下载走代理 {proxy}")
-    eprint(f"[install] 下载模型 {name}（首次可能几分钟）")
-    r = subprocess.run([str(VENV_PY), "-c", snippet, str(job), str(SKILL_DIR / "models")],
-                       env=env, capture_output=True, text=True)
+    job.write_text(json.dumps({"ocr_version": m["ocr_version"], "model_type": m["model_type"]},
+                              ensure_ascii=False), encoding="utf-8")
+    env = proxied_env(proxy or cfg.get("proxy"))
+    eprint(f"[models] 下载模型 {name}（{m['size_mb']}MB，首次可能几分钟）")
+    r = subprocess.run([str(VENV_PY), "-c", snippet, str(job), str(MODEL_ROOT)],
+                       env=env, capture_output=True, text=True, timeout=1800)
     job.unlink(missing_ok=True)
     if r.returncode != 0 or "MODELS_OK" not in r.stdout:
-        raise SystemExit(f"[install] 模型下载失败:\n{r.stdout}\n{r.stderr}")
-    config["installed_version"] = name
-    write_config(config)
-
-
-def installed_models():
-    """{name: 是否已下载}——按 models.json 候选查 models/official_models/。"""
-    mmap = load_models_map()
-    out = {}
-    base = SKILL_DIR / "models" / "official_models"
-    for name, params in mmap.items():
-        det = params.get("text_detection_model_name") or f"{name}_det"
-        rec = params.get("text_recognition_model_name") or f"{name}_rec"
-        out[name] = (base / det).exists() and (base / rec).exists()
-    return out
-
-
-def model_table():
-    mmap = load_models_map()
-    cfg = read_config()
-    inst = installed_models()
-    rows = []
-    for name in mmap:
-        mark = "  [默认]" if name == cfg.get("model") else ""
-        st = "已安装" if inst[name] else "未安装"
-        rows.append(f"{name} [{st}]{mark} — {mmap[name].get('desc', '')}")
-    return rows
+        raise SystemExit(f"[models] 模型下载失败:\n{r.stdout}\n{r.stderr}")
+    cfg["installed_version"] = name
+    write_config(cfg)
 
 
 def rm_model(name, cfg):
-    """删除某模型的缓存文件；若它是默认则回退默认。返回是否删除过。"""
+    """删除某模型的缓存文件；若它是默认则回退对应默认。"""
     mmap = load_models_map()
-    det = mmap[name].get("text_detection_model_name") or f"{name}_det"
-    rec = mmap[name].get("text_recognition_model_name") or f"{name}_rec"
-    base = SKILL_DIR / "models" / "official_models"
+    m = mmap.get(name)
+    if not m:
+        print(f"[models] 未知模型 {name}")
+        return False
     removed = False
-    for d in (det, rec):
-        p = base / d
+    for key in ("det_file", "rec_file"):
+        p = MODEL_ROOT / m[key]
         if p.exists():
-            shutil.rmtree(p)
-            print(f"[models] 已删除 {d}")
+            p.unlink()
+            print(f"[models] 已删除 {m[key]}")
             removed = True
-    if name == cfg.get("model"):
-        cfg["model"] = DEFAULT_CONFIG["model"]
+    if name == cfg.get("model_cpu"):
+        cfg["model_cpu"] = DEFAULT_CONFIG["model_cpu"]
         write_config(cfg)
-        print(f"[models] 默认模型已回退到 {DEFAULT_CONFIG['model']}")
+        print(f"[models] CPU 默认模型已回退到 {DEFAULT_CONFIG['model_cpu']}")
+    if name == cfg.get("model_gpu"):
+        cfg["model_gpu"] = DEFAULT_CONFIG["model_gpu"]
+        write_config(cfg)
+        print(f"[models] GPU 默认模型已回退到 {DEFAULT_CONFIG['model_gpu']}")
     if not removed:
         print(f"[models] {name} 未安装，无需删除")
     return removed
 
 
-def _models_menu():
-    mmap = load_models_map()
+def ask_model(mmap, default):
+    """交互询问下载哪个模型；空输入/非交互返回 None（由调用方用默认）。"""
     if not sys.stdin.isatty():
-        print("[models] 非交互，列出如下；命令: models list / set-default|add|rm <模型名>")
-        for r in model_table():
-            print(f"  {r}")
-        return 0
+        return None
+    print("需要下载一个 OCR 模型才能识别图片文字（首次一次性）。可选：")
+    for i, name in enumerate(mmap, 1):
+        print(f"  {i}. {model_line(name)}")
     while True:
-        print("\n[models] 模型管理：")
-        for i, name in enumerate(mmap, 1):
-            print(f"  {i}. {model_table_inst(name)}")
-        print("操作: [s]设默认  [d]下载  [r]删除  [q]退出")
-        op = _readline("> ").strip().lower()
-        if op == "q" or not op:
-            return 0
-        if op not in ("s", "d", "r"):
-            print("无效操作")
-            continue
-        sel = _readline("输入模型编号: ").strip()
-        if not sel.isdigit() or not (1 <= int(sel) <= len(mmap)):
-            print("无效编号")
-            continue
-        name = list(mmap)[int(sel) - 1]
-        if op == "s":
-            cfg = read_config()
-            cfg["model"] = name
-            write_config(cfg)
-            print(f"[models] 默认模型已设为 {name}（未安装则下次 OCR 自动下载）")
-        elif op == "d":
-            cfg = read_config()
-            p = _readline("代理地址（回车=直连，如 http://127.0.0.1:<端口>）: ").strip() or None
-            ensure_models(cfg, model=name, proxy=p)
-        elif op == "r":
-            rm_model(name, read_config())
+        s = _readline(f"输入编号或名称选择（回车用默认 {default}）: ").strip()
+        if not s:
+            return default
+        if s.isdigit() and 1 <= int(s) <= len(mmap):
+            return list(mmap)[int(s) - 1]
+        if s in mmap:
+            return s
+        print("无效，重试")
 
 
-def model_table_inst(name, idx=None):
-    mmap = load_models_map()
-    cfg = read_config()
-    inst = installed_models()
-    mark = "  [默认]" if name == cfg.get("model") else ""
-    st = "已安装" if inst[name] else "未安装"
-    prefix = f"{idx}. " if idx else ""
-    return f"{prefix}{name} [{st}]{mark} — {mmap[name].get('desc', '')}"
+def ask_proxy():
+    """交互询问代理地址；空回车=直连；非交互返回 None。"""
+    if not sys.stdin.isatty():
+        return None
+    print("接下来要下载依赖（约 300MB）和 OCR 模型（数百 MB）。")
+    print("如果网络访问下载源需要代理，请填代理地址；不需要则直接回车（直连下载）。")
+    print("代理地址会保存到本机 config，之后更新检查也用它。")
+    s = _readline("代理地址，格式如 http://127.0.0.1:<端口>（回车=直连）: ").strip()
+    return s or None
 
 
-def cmd_models(args):
-    mmap = load_models_map()
-    cfg = read_config()
-    if args.action == "list":
-        print("[models] 可用模型：")
-        for r in model_table():
-            print(f"  {r}")
-        print(f"[models] 当前默认: {cfg.get('model')}  proxy={cfg.get('proxy') or '无'}")
-        return 0
-    if args.name and args.name not in mmap:
-        print(f"[models] 未知模型 {args.name}。可用: {', '.join(mmap)}")
-        return 1
-    if args.action == "set-default":
-        cfg["model"] = args.name
+# ---------- GPU 交互 ----------
+
+def gpu_enable_prompt(cfg, proxy):
+    """首次安装后的 GPU 提示：仅硬件符合要求时才弹。返回更新后的 cfg。"""
+    capable, module, dml = venv_gpu_status()
+    cfg["gpu_capable"] = capable
+    if not capable:
+        eprint("[install] 未检测到可用 DirectML 设备，跳过 GPU 配置")
         write_config(cfg)
-        print(f"[models] 默认模型已设为 {args.name}（未安装则下次 OCR 自动下载）")
-        return 0
-    if args.action == "add":
-        ensure_models(cfg, model=args.name, proxy=args.proxy)
-        return 0
-    if args.action == "rm":
-        rm_model(args.name, cfg)
-        return 0
-    if args.action == "menu":
-        return _models_menu()
-    return 0
+        return cfg
+    if not sys.stdin.isatty():
+        eprint("[install] 检测到可用 DirectML 设备；非交互，未启用 GPU（可用 config --gpu on 开启）")
+        write_config(cfg)
+        return cfg
+    eprint("[install] 检测到你的显卡支持 GPU 加速（DirectML）。")
+    if module:
+        ans = _readline("[install] 是否启用 GPU 加速？（说明：识图大幅变快，GPU 默认用 v6 medium 更准；"
+                        "会修改 config 的 gpu 字段。y=启用 / N=不用）: ").strip().lower()
+        if ans.startswith("y"):
+            cfg["gpu"] = True
+            print("[install] GPU 加速已启用（/llm-sight-config --gpu off 可关闭）")
+    else:
+        ans = _readline(
+            f"[install] 是否安装并启用 GPU 加速模块（onnxruntime-directml，约 {GPU_MODULE_SIZE_MB}MB，"
+            "会修改 config 的 gpu 字段，可随时删除）？(y/N): ").strip().lower()
+        if ans.startswith("y"):
+            install_gpu_module(proxy or cfg.get("proxy"))
+            cfg["gpu"] = True
+            print("[install] GPU 模块已安装并启用（/llm-sight-config --gpu-module remove 可删除）")
+    write_config(cfg)
+    return cfg
 
 
+# ---------- commands ----------
 
 def install_commands():
     if not COMMANDS_SRC.is_dir():
@@ -360,9 +428,9 @@ def update_check(config):
         print(f"[update] 检查失败（不影响使用）: {e}")
         return 0
     latest = data.get("latest")
-    installed = config.get("installed_version") or config.get("model")
+    installed = config.get("installed_version")
     if latest and installed and latest != installed:
-        print(f"[update] 检测到新版本: {installed} -> {latest}（setup.py config --model {latest} 可切换）")
+        print(f"[update] 检测到新版本模型: {installed} -> {latest}（setup.py models set-default {latest} 可切换）")
     elif latest and not installed:
         print(f"[update] 推荐模型: {latest}")
     else:
@@ -372,8 +440,10 @@ def update_check(config):
     return 0
 
 
+# ---------- subcommands ----------
+
 def cmd_check():
-    print("[status] llm-sight 环境检查")
+    print("[status] llm-sight 环境检查（引擎: rapidocr / onnxruntime）")
     print(f"[status] skill 目录: {SKILL_DIR}")
     found = find_python()
     if found:
@@ -381,12 +451,16 @@ def cmd_check():
     else:
         print(f"[status] python: 未找到（请安装 Python 3.8-3.13: {PY_DOWNLOAD_URL}）")
     print(f"[status] venv: {'ok' if venv_ok() else '缺失/不可用'}")
-    models_ok = (SKILL_DIR / "models" / "official_models").exists()
-    print(f"[status] models: {'ok' if models_ok else '缺失'}")
     cfg = read_config()
-    print(f"[status] config: model={cfg.get('model')} auto_update={cfg.get('auto_update')} "
-          f"help_hint={cfg.get('help_hint')} proxy={cfg.get('proxy') or '无'} "
-          f"manifest_url={cfg.get('manifest_url') or '未配置'}")
+    capable, module, dml = venv_gpu_status()
+    print(f"[status] GPU 模块: {'已安装' if module else '未安装'} | "
+          f"DirectX12 显卡: {'符合要求' if capable else '不支持'} | 启用: {'是' if cfg.get('gpu') else '否'}")
+    print(f"[status] config: model_cpu={cfg.get('model_cpu')} model_gpu={cfg.get('model_gpu')} "
+          f"auto_update={cfg.get('auto_update')} help_hint={cfg.get('help_hint')} "
+          f"proxy={cfg.get('proxy') or '无'} manifest_url={cfg.get('manifest_url') or '未配置'}")
+    print("[status] 模型：")
+    for line in model_table(cfg):
+        print(f"  {line}")
     return 0
 
 
@@ -398,48 +472,45 @@ def cmd_install(args):
     system_python, ver = found
     eprint(f"[install] 使用系统 python {ver}")
     cfg = read_config()
-    mmap = load_models_map()
+    want_gpu = GPU_MARKER.exists()  # _full 版本默认带 GPU 模块
+    if want_gpu:
+        eprint("[install] 检测到 _full 版本标记，默认包含 GPU 加速模块")
 
-    # 1) 代理：一次询问，覆盖后续 pip 依赖与模型下载
+    # 1) 代理：一次询问
     if args.proxy is not None:
         cfg["proxy"] = args.proxy or None
         write_config(cfg)
-    elif not cfg.get("proxy"):
-        if sys.stdin.isatty():
-            p = ask_proxy()
-            if p:
-                cfg["proxy"] = p
-                write_config(cfg)
-        else:
-            eprint("[install] 未配置代理，下载直连；可用 --proxy 或 /llm-sight-config 配置")
+    elif not cfg.get("proxy") and sys.stdin.isatty():
+        p = ask_proxy()
+        if p:
+            cfg["proxy"] = p
+            write_config(cfg)
     proxy = cfg.get("proxy")
 
-    # 2) 模型选择：有模型问"用默认还是下其他"，无模型问下载哪个（代理已问过）
-    if (SKILL_DIR / "models" / "official_models").exists():
-        if sys.stdin.isatty() and not args.model:
-            s = _readline(
-                f"[install] 已装好 OCR 模型，当前默认是 {cfg.get('model') or DEFAULT_CONFIG['model']}。\n"
-                "[install] 直接用默认就行，还是要下载其他模型？（y=用默认 / n=下载其他模型）: "
+    # 2) 装依赖（venv，full 版默认装 DirectML）
+    ensure_venv(system_python, proxy, want_gpu_module=want_gpu)
+
+    # 3) GPU 提示（仅 DML 可用时弹）
+    cfg = gpu_enable_prompt(cfg, proxy)
+
+    # 4) 模型：推荐下载默认（不强求）
+    capable, module, dml = venv_gpu_status()
+    default_model = cfg.get("model_gpu") if dml else cfg.get("model_cpu")
+    if not model_cached(default_model):
+        if sys.stdin.isatty():
+            mmap = load_models_map()
+            m = mmap[default_model]
+            ans = _readline(
+                f"[install] 推荐下载默认模型 {default_model}（{m['size_mb']}MB · "
+                f"精度 det {m['det_hmean']}/rec {m['rec_acc']}）。下载吗？(y=下载 / N=跳过，首次识图再下载）: "
             ).strip().lower()
-            if s.startswith("n"):
-                args.model = ask_model(mmap, cfg.get("model") or DEFAULT_CONFIG["model"])
+            if ans.startswith("y"):
+                ensure_models(cfg, default_model, proxy)
         else:
-            eprint("[install] 检测到已有模型，用当前默认；要下载其他模型用 setup.py models add <模型名> 或 /llm-sight-model")
+            eprint(f"[install] 默认模型 {default_model} 未下载，跳过（首次识图时询问下载）")
     else:
-        if not args.model:
-            picked = ask_model(mmap, cfg.get("model") or DEFAULT_CONFIG["model"])
-            if picked:
-                args.model = picked
-            else:
-                print(f"[install] 未交互输入，用默认模型 {cfg.get('model') or DEFAULT_CONFIG['model']}"
-                      f"（候选: {', '.join(mmap)}；想换用 setup.py install --model X）")
+        eprint(f"[install] 默认模型 {default_model} 已就绪")
 
-    # 3) 装依赖（venv + pip，走上面确认的代理）
-    ensure_venv(system_python, proxy)
-
-    # 4) 装模型（走代理）
-    ensure_models(cfg, model=args.model,
-                  proxy=args.proxy if args.proxy is not None else proxy)
     install_commands()
     print("[install] 完成。可用 /llm-sight-status 查看状态")
     return 0
@@ -448,11 +519,12 @@ def cmd_install(args):
 def cmd_config(args):
     cfg = read_config()
     mmap = load_models_map()
-    if args.model:
-        if args.model not in mmap:
-            print(f"[config] 未知模型 {args.model}。可用: {', '.join(mmap)}")
-            return 1
-        cfg["model"] = args.model
+    for attr, val in (("model_cpu", args.model_cpu), ("model_gpu", args.model_gpu)):
+        if val:
+            if val not in mmap:
+                print(f"[config] 未知模型 {val}。可用: {', '.join(mmap)}")
+                return 1
+            cfg[attr] = val
     if args.auto_update is not None:
         cfg["auto_update"] = args.auto_update
     if args.help_hint is not None:
@@ -461,37 +533,164 @@ def cmd_config(args):
         cfg["proxy"] = args.proxy or None
     if args.manifest_url is not None:
         cfg["manifest_url"] = args.manifest_url or None
+
+    # GPU 开关 / 模块管理
+    if args.gpu is not None:
+        capable, module, dml = venv_gpu_status()
+        if args.gpu:
+            if not capable:
+                print("[config] 当前设备不支持 DirectML（GPU 加速），无法启用。")
+                if module:
+                    print("[config] 建议删除 GPU 模块释放空间；更换支持 DirectML 的设备后再下载：")
+                    print("[config]   config --gpu-module remove")
+            elif not module:
+                print("[config] GPU 加速模块未安装。先安装：config --gpu-module install（会再次检测并提示）")
+            else:
+                cfg["gpu"] = True
+        else:
+            cfg["gpu"] = False
+    if args.gpu_module:
+        action = args.gpu_module
+        if action == "install":
+            capable, module, dml = venv_gpu_status()
+            if not capable:
+                print("[config] 当前设备不支持 DirectML，建议不要安装 GPU 模块；")
+                print("[config] 更换支持 DirectML 的设备后再安装。")
+                return 1
+            if sys.stdin.isatty():
+                ans = _readline(
+                    f"[config] 安装 GPU 加速模块（onnxruntime-directml，约 {GPU_MODULE_SIZE_MB}MB，"
+                    "替换 onnxruntime；可随时删除释放空间）。确认安装？(y/N): ").strip().lower()
+                if not ans.startswith("y"):
+                    print("[config] 已取消")
+                    return 0
+            install_gpu_module(proxy=cfg.get("proxy"))
+            cfg["gpu"] = True
+        elif action == "remove":
+            if sys.stdin.isatty():
+                ans = _readline(
+                    "[config] 删除 GPU 加速模块（卸载 onnxruntime-directml，装回 CPU 版，释放约 "
+                    f"{GPU_MODULE_SIZE_MB}MB；GPU 加速将关闭）。确认删除？(y/N): ").strip().lower()
+                if not ans.startswith("y"):
+                    print("[config] 已取消")
+                    return 0
+            remove_gpu_module(proxy=cfg.get("proxy"))
+            cfg["gpu"] = False
+        capable, module, dml = venv_gpu_status()
+        cfg["gpu_capable"] = capable
+
     write_config(cfg)
-    print(f"[config] model={cfg['model']} auto_update={cfg['auto_update']} "
-          f"help_hint={cfg.get('help_hint')} proxy={cfg.get('proxy') or '无'} "
-          f"manifest_url={cfg.get('manifest_url') or '未配置'}")
+    capable, module, dml = venv_gpu_status()
+    print(f"[config] model_cpu={cfg['model_cpu']} model_gpu={cfg['model_gpu']} "
+          f"gpu={'on' if cfg.get('gpu') else 'off'} gpu_capable={'是' if capable else '否'} "
+          f"gpu_module={'已装' if module else '未装'} auto_update={cfg.get('auto_update')} "
+          f"proxy={cfg.get('proxy') or '无'}")
     return 0
 
 
-def cmd_update():
+def cmd_models(args):
+    mmap = load_models_map()
     cfg = read_config()
-    return update_check(cfg)
+    if args.action == "list":
+        print("[models] 可用模型：")
+        for line in model_table(cfg):
+            print(f"  {line}")
+        print(f"[models] 默认: CPU={cfg.get('model_cpu')} GPU={cfg.get('model_gpu')} "
+              f"gpu={'on' if cfg.get('gpu') else 'off'} proxy={cfg.get('proxy') or '无'}")
+        return 0
+    if args.name and args.name not in mmap:
+        print(f"[models] 未知模型 {args.name}。可用: {', '.join(mmap)}")
+        return 1
+    if args.action == "set-default":
+        if args.cpu:
+            cfg["model_cpu"] = args.name
+        if args.gpu:
+            cfg["model_gpu"] = args.name
+        if not (args.cpu or args.gpu):
+            cfg["model_cpu"] = cfg["model_gpu"] = args.name
+        write_config(cfg)
+        print(f"[models] 默认模型已设为 {args.name}（未下载则首次识图时询问下载）")
+        return 0
+    if args.action == "add":
+        ensure_models(cfg, args.name, args.proxy)
+        return 0
+    if args.action == "rm":
+        rm_model(args.name, cfg)
+        return 0
+    if args.action == "menu":
+        return _models_menu()
+    return 0
+
+
+def _models_menu():
+    mmap = load_models_map()
+    if not sys.stdin.isatty():
+        print("[models] 非交互，列出如下；命令: models list / set-default|add|rm <模型名> [--cpu|--gpu]")
+        for r in model_table(read_config()):
+            print(f"  {r}")
+        return 0
+    while True:
+        cfg = read_config()
+        print("\n[models] 模型管理：")
+        for i, name in enumerate(mmap, 1):
+            print(f"  {i}. {model_line(name, cfg)}")
+        print("操作: [s]设默认(CPU+GPU)  [c]设CPU默认  [g]设GPU默认  [d]下载  [r]删除  [q]退出")
+        op = _readline("> ").strip().lower()
+        if op == "q" or not op:
+            return 0
+        if op not in ("s", "c", "g", "d", "r"):
+            print("无效操作")
+            continue
+        sel = _readline("输入模型编号: ").strip()
+        if not sel.isdigit() or not (1 <= int(sel) <= len(mmap)):
+            print("无效编号")
+            continue
+        name = list(mmap)[int(sel) - 1]
+        if op == "s":
+            cfg["model_cpu"] = cfg["model_gpu"] = name
+            write_config(cfg)
+            print(f"[models] 默认模型已设为 {name}（CPU+GPU）")
+        elif op in ("c", "g"):
+            cfg["model_cpu" if op == "c" else "model_gpu"] = name
+            write_config(cfg)
+            print(f"[models] {'CPU' if op == 'c' else 'GPU'} 默认模型已设为 {name}")
+        elif op == "d":
+            p = _readline("代理地址（回车=用 config，如 http://127.0.0.1:<端口>）: ").strip() or None
+            ensure_models(cfg, name, p)
+        elif op == "r":
+            rm_model(name, cfg)
+
+
+def cmd_update():
+    return update_check(read_config())
 
 
 def main():
     ap = argparse.ArgumentParser(description="llm-sight 环境引导器")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check", help="完整性检查")
-    pi = sub.add_parser("install", help="引导：建 venv、确保模型、装斜杠命令")
-    pi.add_argument("--model", help="要下载/使用的模型（默认 PP-OCRv6_medium）")
-    pi.add_argument("--proxy", help="模型下载代理地址，如 http://127.0.0.1:<端口>（不给则直连）")
+    pi = sub.add_parser("install", help="引导：建 venv、配置 GPU、确保模型、装斜杠命令")
+    pi.add_argument("--model", help="要下载/使用的模型")
+    pi.add_argument("--proxy", help="代理地址，如 http://127.0.0.1:<端口>（不给则直连）")
     p = sub.add_parser("config", help="查看/修改配置")
-    p.add_argument("--model")
+    p.add_argument("--model-cpu")
+    p.add_argument("--model-gpu")
+    p.add_argument("--gpu", type=lambda s: s.lower() in ("1", "true", "on", "yes"),
+                   help="启用(on)/停用(off) GPU 加速")
+    p.add_argument("--gpu-module", choices=("install", "remove"),
+                   help="安装/删除 GPU 加速模块（onnxruntime-directml）")
     p.add_argument("--auto-update", type=lambda s: s.lower() in ("1", "true", "on", "yes"))
     p.add_argument("--help-hint", type=lambda s: s.lower() in ("1", "true", "on", "yes"),
                    help="大模型用 skill 时是否提醒 /llm-sight-help（默认 on）")
-    p.add_argument("--proxy", help="代理地址，如 http://127.0.0.1:<端口>（空串清除）")
+    p.add_argument("--proxy", help="代理地址（空串清除）")
     p.add_argument("--manifest-url", help="更新清单 URL（空串清除）")
     m = sub.add_parser("models", help="模型管理")
     m.add_argument("action", choices=("list", "set-default", "add", "rm", "menu"),
                    nargs="?", default="menu")
     m.add_argument("name", nargs="?")
-    m.add_argument("--proxy", help="下载代理地址，如 http://127.0.0.1:<端口>（不给则直连）")
+    m.add_argument("--cpu", action="store_true", help="仅设 CPU 默认")
+    m.add_argument("--gpu", action="store_true", help="仅设 GPU 默认")
+    m.add_argument("--proxy", help="下载代理地址")
     sub.add_parser("update", help="检查模型更新（手动触发）")
     args = ap.parse_args()
 

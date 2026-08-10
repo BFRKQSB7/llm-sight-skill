@@ -1,11 +1,11 @@
 ---
 name: llm-sight
 description: >-
-  Extract text from images, screenshots, and pictures using the PaddleOCR
-  models (PP-OCRv6). USE THIS whenever the user hands you an image, screenshot,
-  photo, scan, or picture and expects you to read the text in it — to
-  transcribe, quote, translate, summarize, or act on what the image says. This
-  matters most when you are a non-multimodal model and cannot see the image
+  Extract text from images, screenshots, and pictures using PP-OCRv6 models
+  (rapidocr, ONNX + onnxruntime). USE THIS whenever the user hands you an image,
+  screenshot, photo, scan, or picture and expects you to read the text in it —
+  to transcribe, quote, translate, summarize, or act on what the image says.
+  This matters most when you are a non-multimodal model and cannot see the image
   directly: do NOT guess what the image shows, run the OCR script and read its
   output. If you try to `read` an image file and it fails, errors, or shows only
   binary/illegible content, STOP retrying `read` and use this skill instead.
@@ -16,11 +16,12 @@ description: >-
   image's content.
 ---
 
-# llm-sight: read text out of images with PaddleOCR
+# llm-sight: read text out of images with PP-OCRv6 (rapidocr)
 
 You can't see the image, but you can extract its text reliably. This skill turns
-an image into plain text via a thin PaddleOCR wrapper. Use the extracted text as
-ground truth for whatever the user asked — never guess what the image shows.
+an image into plain text via rapidocr (PP-OCRv6 ONNX models on onnxruntime).
+Use the extracted text as ground truth for whatever the user asked — never guess
+what the image shows.
 
 ## The one command
 
@@ -33,31 +34,33 @@ Common flags:
 
 | Flag | Meaning | Default |
 |---|---|---|
-| `--lang ch` | language code (ch, en, japan, korean, chinese_cht, french, german, ru, arabic…) | `ch` |
+| `--lang ch` | language (ch, en, chinese_cht, japan — v6 supports these 4; others need a v4/v5 model) | `ch` |
 | `--format text` | text = one recognized line per stdout line | `text` |
 | `--format json` | structured: texts + confidence scores + box coordinates | — |
 | `--device auto` | auto picks GPU when usable, else CPU | `auto` |
 
-The venv carries `paddlepaddle` + `paddleocr`; the model comes from `config.json`
-(default PP-OCRv6_medium). `.venv` missing? Run with system `python` instead
+Model is picked by active device from `config.json`: CPU uses `model_cpu`
+(default PP-OCRv6_small, 31MB), GPU uses `model_gpu` (default PP-OCRv6_medium,
+136MB). `.venv` missing? Run with system `python` instead
 (`python "<SKILL_DIR>/scripts/ocr.py"`) — it prints clear setup guidance.
 
 ## Setup & slash commands
 
 The skill only needs a Python (3.8–3.13). If `.venv` or the OCR models are
 missing: run `/llm-sight-status` → `python "<SKILL_DIR>/scripts/setup.py" install`
-(builds `.venv`, ~1GB, downloads the model) → `/llm-sight-status` again. No
-Python? `setup.py` prints the download link — never auto-install Python yourself.
+(builds `.venv` with rapidocr + onnxruntime, ~300MB; recommends downloading the
+default model but doesn't force it) → `/llm-sight-status` again. No Python?
+`setup.py` prints the download link — never auto-install Python yourself.
 
-On a first model download, ask the user which model (PP-OCRv6_medium 默认 /
-PP-OCRv6_tiny / PP-OCRv5_mobile / PP-OCRv5_server / PP-OCRv4_mobile) and proxy
-(`http://127.0.0.1:<端口>`, empty = direct); then `setup.py install --model X --proxy Y`.
+On a first model download, ask the user which model (show size + accuracy +
+who it fits) and proxy (`http://127.0.0.1:<端口>`, empty = direct); then
+`setup.py install --model X --proxy Y`.
 
 | Command | Action |
 |---|---|
-| `/llm-sight-status` | show python / venv / models / config status |
-| `/llm-sight-model` | model manager menu: download / delete / set-default model |
-| `/llm-sight-config` | pick OCR model, toggle auto-update, set proxy / manifest URL |
+| `/llm-sight-status` | show python / venv / models / GPU / config status |
+| `/llm-sight-model` | model manager menu: download / delete / set-default (CPU/GPU) |
+| `/llm-sight-config` | pick CPU/GPU model, toggle GPU, install/remove GPU module, proxy / manifest URL |
 | `/llm-sight-update` | manually check for a newer OCR model |
 | `/llm-sight-help` | list all commands and their uses |
 
@@ -65,6 +68,22 @@ On first use (config `help_hint` on, default), remind the user:
 `/llm-sight-help` 可查看所有可用命令。
 
 Config is stored in `<SKILL_DIR>/config.json` (local only; not shipped).
+
+## GPU acceleration (optional, DirectML)
+
+The OCR engine is onnxruntime. GPU acceleration is an optional DirectML module
+(`onnxruntime-directml`) — it works on any DX12-capable GPU including NVIDIA RTX
+50 series (paddle's CUDA path does NOT work on Blackwell; this skill no longer
+uses paddle). On first install, if the machine has a capable GPU the setup asks
+whether to enable it. Manage it anytime via `/llm-sight-config`:
+- `--gpu on|off` — enable/disable GPU acceleration
+- `--gpu-module install|remove` — install / delete the GPU module (reinstall
+  re-checks the hardware; if the machine can't use GPU it recommends NOT
+  installing / deleting the module to free ~150MB)
+
+`ocr.py` re-detects DML support on every run and records it in
+`config.json` (`gpu_capable`). If it detects the module is installed but the
+machine can't use it, it suggests deleting the module.
 
 ## Standard workflow
 
@@ -91,8 +110,12 @@ Config is stored in `<SKILL_DIR>/config.json` (local only; not shipped).
 - **Blurry/rotated text** — run anyway; PP-OCRv6 handles most photos. Heavily
   sideways → ask for a straighter image.
 - **Multiple images** — pass several paths; output is separated by `# <image>`.
+  If the GPU module is installed but not enabled, `ocr.py` asks whether to use
+  GPU for this batch.
 - **URLs** — downloaded to the skill's `tmp/` first.
 - **Long documents** — OCR one image at a time; loop the command over the files.
+- **Slow on CPU with the medium model** — v6 medium is GPU-oriented; on pure CPU
+  it can take ~60s/image. Use the small model (`model_cpu`) for CPU, or enable GPU.
 
 ## Troubleshooting
 

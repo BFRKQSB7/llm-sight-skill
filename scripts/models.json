@@ -1,32 +1,57 @@
 {
+  "PP-OCRv6_small": {
+    "ocr_version": "PP-OCRv6",
+    "model_type": "small",
+    "det_file": "PP-OCRv6_det_small.onnx",
+    "rec_file": "PP-OCRv6_rec_small.onnx",
+    "size_mb": 31,
+    "det_hmean": 84.1,
+    "rec_acc": 81.3,
+    "who": "CPU 默认。速度与精度平衡，日常识图多数场景够用。",
+    "desc": "默认（CPU），速度与精度平衡"
+  },
   "PP-OCRv6_medium": {
     "ocr_version": "PP-OCRv6",
-    "text_detection_model_name": null,
-    "text_recognition_model_name": null,
-    "desc": "默认，质量与速度平衡"
+    "model_type": "medium",
+    "det_file": "PP-OCRv6_det_medium.onnx",
+    "rec_file": "PP-OCRv6_rec_medium.onnx",
+    "size_mb": 136,
+    "det_hmean": 86.2,
+    "rec_acc": 83.2,
+    "who": "GPU 默认。精度最高，配合 DirectML 很快；纯 CPU 上很慢（不建议）。",
+    "desc": "默认（GPU），精度最高，CPU 上慢"
   },
   "PP-OCRv6_tiny": {
     "ocr_version": "PP-OCRv6",
-    "text_detection_model_name": "PP-OCRv6_tiny_det",
-    "text_recognition_model_name": "PP-OCRv6_tiny_rec",
-    "desc": "最快，轻量"
-  },
-  "PP-OCRv5_mobile": {
-    "ocr_version": "PP-OCRv5",
-    "text_detection_model_name": "PP-OCRv5_mobile_det",
-    "text_recognition_model_name": "PP-OCRv5_mobile_rec",
-    "desc": "v5 移动端，快"
+    "model_type": "tiny",
+    "det_file": "PP-OCRv6_det_tiny.onnx",
+    "rec_file": "PP-OCRv6_rec_tiny.onnx",
+    "size_mb": 7,
+    "det_hmean": 80.6,
+    "rec_acc": 73.5,
+    "who": "最轻最快。低配机器、海量图片批处理的场景。",
+    "desc": "最轻最快，适合低配/批处理"
   },
   "PP-OCRv5_server": {
     "ocr_version": "PP-OCRv5",
-    "text_detection_model_name": "PP-OCRv5_server_det",
-    "text_recognition_model_name": "PP-OCRv5_server_rec",
-    "desc": "v5 服务器版，更准"
+    "model_type": "server",
+    "det_file": "ch_PP-OCRv5_det_server.onnx",
+    "rec_file": "ch_PP-OCRv5_rec_server.onnx",
+    "size_mb": 165,
+    "det_hmean": 83.8,
+    "rec_acc": 86.4,
+    "who": "中文识别精度最高（v5 服务器版）。体积大，CPU 慢；对精度要求高且用 GPU 时考虑。",
+    "desc": "v5 服务器版，中文精度最高，体积大"
   },
   "PP-OCRv4_mobile": {
     "ocr_version": "PP-OCRv4",
-    "text_detection_model_name": "PP-OCRv4_mobile_det",
-    "text_recognition_model_name": "PP-OCRv4_mobile_rec",
-    "desc": "v4 移动端，兼容老环境"
+    "model_type": "mobile",
+    "det_file": "ch_PP-OCRv4_det_mobile.onnx",
+    "rec_file": "ch_PP-OCRv4_rec_mobile.onnx",
+    "size_mb": 15,
+    "det_hmean": 78.7,
+    "rec_acc": 78.8,
+    "who": "v4 移动端。轻量，兼容老环境，精度略低。",
+    "desc": "v4 移动端，轻量兼容老环境"
   }
 }

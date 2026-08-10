@@ -9,6 +9,6 @@ py -3.12 "$HOME/.claude/skills/llm-sight/scripts/setup.py" update
 
 把输出读给用户。若提示有新版本，询问是否要切换：
 ```bash
-py -3.12 "$HOME/.claude/skills/llm-sight/scripts/setup.py" config --model <新模型名>
+py -3.12 "$HOME/.claude/skills/llm-sight/scripts/setup.py" models set-default <新模型名>
 ```
 更新检查失败时不影响使用，如实告知即可。
