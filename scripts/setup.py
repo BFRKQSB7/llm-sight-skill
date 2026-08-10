@@ -517,15 +517,19 @@ def cmd_install(args):
     return 0
 
 
-def _config_model_menu():
-    """config 面板的交互模型管理：下载未装 / 删除已装 / 设默认。"""
+def _config_interactive_panel():
+    """config 的完整交互面板：模型（下载/删除/设默认）+ GPU + 代理 + 自动更新。"""
     mmap = load_models_map()
     while True:
         cfg = read_config()
-        print("\n[config] 模型管理（体积 · 识别率 · 支持语言 · 适合人群）：")
+        capable, module, dml = venv_gpu_status()
+        print("\n[config] 模型（体积 · 识别率 · 支持语言 · 适合人群）：")
         for i, name in enumerate(mmap, 1):
             print(f"  {i}. {model_line(name, cfg)}")
-        print("[config] 操作: [d]下载未装的模型  [r]删除已装的模型  [s]设默认  [q]返回")
+        print(f"[config] GPU: {'启用' if cfg.get('gpu') else '停用'} | "
+              f"模块: {'已装' if module else '未装'} | 显卡: {'符合要求' if capable else '不支持'} | "
+              f"proxy: {cfg.get('proxy') or '无'} | 自动更新: {'开' if cfg.get('auto_update', True) else '关'}")
+        print("[config] 操作: [d]下载模型 [r]删除模型 [s]设默认 [g]GPU开关 [u]GPU模块 [p]代理 [a]自动更新 [q]退出")
         op = _readline("> ").strip().lower()
         if op == "q" or not op:
             return 0
@@ -575,6 +579,48 @@ def _config_model_menu():
                     cfg["model_cpu"] = cfg["model_gpu"] = name
                 write_config(cfg)
                 print(f"[config] 默认模型已设为 {name}")
+        elif op == "g":
+            capable, module, dml = venv_gpu_status()
+            if not capable:
+                print("[config] 当前显卡不支持 DirectML，无法启用 GPU 加速。")
+                if module:
+                    print("[config] 建议删除 GPU 模块释放空间（操作 [u]），换支持设备后再装。")
+                continue
+            if not module:
+                print("[config] GPU 模块未安装，请先 [u] 安装。")
+                continue
+            cfg["gpu"] = not cfg.get("gpu", False)
+            cfg["gpu_explicit"] = True
+            write_config(cfg)
+            print(f"[config] GPU 加速已{'启用' if cfg['gpu'] else '停用'}")
+        elif op == "u":
+            capable, module, dml = venv_gpu_status()
+            proxy = read_config().get("proxy")
+            if module:
+                if _readline(f"删除 GPU 模块（释放约 {GPU_MODULE_SIZE_MB}MB，GPU 加速关闭）？(y/N): ").strip().lower().startswith("y"):
+                    remove_gpu_module(proxy)
+                    cfg = read_config(); cfg["gpu"] = False; cfg["gpu_explicit"] = True
+                    write_config(cfg)
+            else:
+                if not capable:
+                    print("[config] 当前显卡不支持 DirectML，建议不安装 GPU 模块；")
+                    print("[config] 更换支持 DirectML 的设备后再安装。")
+                    continue
+                if _readline(f"安装 GPU 加速模块（onnxruntime-directml，约 {GPU_MODULE_SIZE_MB}MB，"
+                             "会修改 config）？(y/N): ").strip().lower().startswith("y"):
+                    install_gpu_module(proxy)
+                    cfg = read_config(); cfg["gpu"] = True; cfg["gpu_explicit"] = True
+                    write_config(cfg)
+        elif op == "p":
+            p = _readline("代理地址（格式 http://127.0.0.1:<端口>，回车=清除）: ").strip() or None
+            cfg = read_config(); cfg["proxy"] = p
+            write_config(cfg)
+            print(f"[config] proxy = {p or '无'}")
+        elif op == "a":
+            cfg = read_config()
+            cfg["auto_update"] = not cfg.get("auto_update", True)
+            write_config(cfg)
+            print(f"[config] auto_update = {'开' if cfg['auto_update'] else '关'}")
     return 0
 
 
@@ -605,7 +651,7 @@ def cmd_config(args):
             print(f"  {line}")
         print("[config] 改设置加参数，如 --model-cpu X --model-gpu Y --gpu on|off --gpu-module install|remove")
         if sys.stdin.isatty():
-            return _config_model_menu()
+            return _config_interactive_panel()
         return 0
 
     for attr, val in (("model_cpu", args.model_cpu), ("model_gpu", args.model_gpu)):
