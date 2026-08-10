@@ -525,9 +525,10 @@ def _config_interactive_panel():
     while True:
         cfg = read_config()
         capable, module, dml = venv_gpu_status()
+        inst = installed_models()
         print("\n[config] 模型（体积 · 识别率 · 支持语言 · 适合人群）：")
         for i, name in enumerate(mmap, 1):
-            print(f"  {i}. {model_line(name, cfg)}")
+            print(f"  {i}. {model_line(name, cfg, inst)}")
         print(f"[config] GPU: {'启用' if cfg.get('gpu') else '停用'} | "
               f"模块: {'已装' if module else '未装'} | 显卡: {'符合要求' if capable else '不支持'} | "
               f"proxy: {cfg.get('proxy') or '无'} | 自动更新: {'开' if cfg.get('auto_update', True) else '关'}")
