@@ -166,6 +166,20 @@ def resolve_image(path, scratch):
     return path
 
 
+def best_installed_model():
+    """返回已装模型里识别精度最高的一个（无则 None）。"""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json"),
+                  encoding="utf-8") as f:
+            mmap = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    installed = [n for n, m in mmap.items() if m.get("det_file") and model_cached(n)]
+    if not installed:
+        return None
+    return max(installed, key=lambda n: model_params(n).get("rec_acc") or 0)
+
+
 def download_model(model_name, cfg):
     """下载所选模型（经用户确认后调用 setup.py models add）。"""
     import subprocess as sp
@@ -239,19 +253,26 @@ def main():
 
     eprint(f"[ocr] device={'gpu' if use_gpu else 'cpu'} lang={args.lang} model={model_name}")
 
-    # 模型未下载时绝不静默下载：先经用户确认
+    # 默认模型未下载 → 回退到已装的最佳模型（只提示不强求）；一个都没有才要求下载
     if not model_cached(model_name):
-        eprint(
-            f"[ocr] 模型 {model_name} 未下载（体积 {mp.get('size_mb')}MB，识别精度 "
-            f"det {mp.get('det_hmean')}/rec {mp.get('rec_acc')}）。识别需要这个模型。"
-        )
-        ans = _confirm(f"[ocr] 现在下载 {model_name} 吗？（y=下载 / N=取消，取消后图片无法识别）: ")
-        if ans.startswith("y"):
-            if not download_model(model_name, cfg):
-                sys.exit(4)
+        fallback = best_installed_model()
+        if fallback:
+            eprint(f"[ocr] 默认模型 {model_name} 未下载。本次用已安装的 {fallback} 识别"
+                   f"（想用更高精度可 /llm-sight-model 下载 {model_name}）。")
+            model_name = fallback
+            mp = model_params(fallback)
         else:
-            eprint(f"[ocr] 取消下载。可用 /llm-sight-model 或 setup.py models add {model_name} 下载（会询问你）。")
-            sys.exit(4)
+            eprint(
+                f"[ocr] 未安装任何 OCR 模型，首次识别需要下载一个"
+                f"（{model_name}，{mp.get('size_mb')}MB，识别精度 det {mp.get('det_hmean')}/rec {mp.get('rec_acc')}）。"
+            )
+            ans = _confirm(f"[ocr] 现在下载默认模型 {model_name} 吗？（y=下载 / N=取消，取消后图片无法识别）: ")
+            if ans.startswith("y"):
+                if not download_model(model_name, cfg):
+                    sys.exit(4)
+            else:
+                eprint(f"[ocr] 取消下载。可用 /llm-sight-model 或 setup.py models add {model_name} 下载（会询问你）。")
+                sys.exit(4)
 
     # 构建 rapidocr 参数（枚举值）
     try:
