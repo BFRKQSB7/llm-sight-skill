@@ -520,6 +520,32 @@ def cmd_install(args):
 def cmd_config(args):
     cfg = read_config()
     mmap = load_models_map()
+
+    changed = any(v is not None for v in (
+        args.model_cpu, args.model_gpu, args.auto_update, args.help_hint,
+        args.proxy, args.manifest_url, args.gpu, args.gpu_module))
+    if not changed:
+        # 无参数 → 显示配置面板（含模型大小与已下载列表）
+        capable, module, dml = venv_gpu_status()
+        inst = installed_models()
+        inst_list = [f"{n}({mmap[n]['size_mb']}MB)" for n in mmap if inst[n]]
+        print("[config] 当前配置：")
+        print(f"  model_cpu = {cfg.get('model_cpu')}"
+              f" ({mmap.get(cfg.get('model_cpu'), {}).get('size_mb', '?')}MB)")
+        print(f"  model_gpu = {cfg.get('model_gpu')}"
+              f" ({mmap.get(cfg.get('model_gpu'), {}).get('size_mb', '?')}MB)")
+        print(f"  gpu = {'on' if cfg.get('gpu') else 'off'} | gpu_capable = {'是' if capable else '否'} | "
+              f"gpu_module = {'已装' if module else '未装'}")
+        print(f"  auto_update = {cfg.get('auto_update')} | proxy = {cfg.get('proxy') or '无'} | "
+              f"manifest_url = {cfg.get('manifest_url') or '未配置'}")
+        print(f"[config] 已下载模型（体积）：{('、'.join(inst_list)) if inst_list else '无'}")
+        print("[config] 可用模型：")
+        for line in model_table(cfg):
+            print(f"  {line}")
+        print("[config] 管理模型（下载/删除/设默认）用 /llm-sight-model 或 models menu；")
+        print("[config] 改设置加参数，如 --model-cpu X --model-gpu Y --gpu on|off --gpu-module install|remove")
+        return 0
+
     for attr, val in (("model_cpu", args.model_cpu), ("model_gpu", args.model_gpu)):
         if val:
             if val not in mmap:
@@ -598,6 +624,9 @@ def cmd_models(args):
         print("[models] 可用模型：")
         for line in model_table(cfg):
             print(f"  {line}")
+        inst = installed_models()
+        inst_list = [f"{n}({mmap[n]['size_mb']}MB)" for n in mmap if inst[n]]
+        print(f"[models] 已下载（体积）：{('、'.join(inst_list)) if inst_list else '无'}")
         print(f"[models] 默认: CPU={cfg.get('model_cpu')} GPU={cfg.get('model_gpu')} "
               f"gpu={'on' if cfg.get('gpu') else 'off'} proxy={cfg.get('proxy') or '无'}")
         return 0
