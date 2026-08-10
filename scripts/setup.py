@@ -215,6 +215,8 @@ def install_gpu_module(proxy):
         raise SystemExit("[gpu] 缺 venv，请先跑 install")
     env = proxied_env(proxy)
     eprint(f"[gpu] 安装 GPU 加速模块（onnxruntime-directml，约 {GPU_MODULE_SIZE_MB}MB）")
+    # onnxruntime 与 onnxruntime-directml 提供同名 onnxruntime 模块，先卸 CPU 版再装，避免并存冲突
+    run([str(VENV_PY), "-m", "pip", "uninstall", "-y", "onnxruntime"], env=env)
     r = run([str(VENV_PY), "-m", "pip", "install", "onnxruntime-directml"], env=env)
     if r.returncode != 0:
         raise SystemExit("[gpu] 安装失败")
