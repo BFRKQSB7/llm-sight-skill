@@ -292,16 +292,21 @@ def ensure_models(cfg, name, proxy=None):
         "p=json.load(open(sys.argv[1],encoding='utf-8'))\n"
         "params={'Global.model_root_dir':sys.argv[2],\n"
         " 'Det.ocr_version':OCRVersion(p['ocr_version']),'Det.model_type':ModelType(p['model_type']),\n"
-        " 'Rec.ocr_version':OCRVersion(p['ocr_version']),'Rec.model_type':ModelType(p['model_type']),\n"
-        " 'Rec.lang_type':LangRec('ch'),'EngineConfig.onnxruntime.use_dml':False}\n"
+        " 'Rec.ocr_version':OCRVersion(p.get('rec_ocr_version') or p['ocr_version']),\n"
+        " 'Rec.model_type':ModelType(p.get('rec_model_type') or p['model_type']),\n"
+        " 'Rec.lang_type':LangRec(p.get('rec_lang') or 'ch'),\n"
+        " 'EngineConfig.onnxruntime.use_dml':False}\n"
         "RapidOCR(params=params)\n"
         "print('MODELS_OK')\n"
     )
     tmp = SKILL_DIR / "tmp"
     tmp.mkdir(exist_ok=True)
     job = tmp / "warmup.json"
-    job.write_text(json.dumps({"ocr_version": m["ocr_version"], "model_type": m["model_type"]},
-                              ensure_ascii=False), encoding="utf-8")
+    job.write_text(json.dumps(
+        {"ocr_version": m["ocr_version"], "model_type": m["model_type"],
+         "rec_ocr_version": m.get("rec_ocr_version"), "rec_model_type": m.get("rec_model_type"),
+         "rec_lang": m.get("rec_lang")},
+        ensure_ascii=False), encoding="utf-8")
     env = proxied_env(proxy or cfg.get("proxy"))
     eprint(f"[models] 下载模型 {name}（{m['size_mb']}MB，首次可能几分钟）")
     r = subprocess.run([str(VENV_PY), "-c", snippet, str(job), str(MODEL_ROOT)],
@@ -314,18 +319,23 @@ def ensure_models(cfg, name, proxy=None):
 
 
 def rm_model(name, cfg):
-    """删除某模型的缓存文件；若它是默认则回退对应默认。"""
+    """删除某模型的缓存文件；若它是默认则回退对应默认。返回是否删除过。
+    逐语言模型只删语言 rec（det 共用 v6 small，不删共享文件）。"""
     mmap = load_models_map()
     m = mmap.get(name)
     if not m:
         print(f"[models] 未知模型 {name}")
         return False
     removed = False
-    for key in ("det_file", "rec_file"):
-        p = MODEL_ROOT / m[key]
-        if p.exists():
+    if m.get("rec_ocr_version"):
+        targets = [m.get("rec_file")]
+    else:
+        targets = [m.get("det_file"), m.get("rec_file")]
+    for f in targets:
+        p = MODEL_ROOT / f
+        if p and p.exists():
             p.unlink()
-            print(f"[models] 已删除 {m[key]}")
+            print(f"[models] 已删除 {f}")
             removed = True
     if name == cfg.get("model_cpu"):
         cfg["model_cpu"] = DEFAULT_CONFIG["model_cpu"]

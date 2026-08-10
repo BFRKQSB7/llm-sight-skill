@@ -225,7 +225,8 @@ def best_installed_model():
             mmap = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
-    installed = [n for n, m in mmap.items() if m.get("det_file") and model_cached(n)]
+    installed = [n for n, m in mmap.items()
+                 if m.get("det_file") and not m.get("rec_lang") and model_cached(n)]  # 排除逐语言模型
     if not installed:
         return None
     return max(installed, key=lambda n: model_params(n).get("rec_acc") or 0)
@@ -351,15 +352,20 @@ def main():
                     eprint(f"[ocr]   可稍后用 /llm-sight-model 或 setup.py models add {model_name} 下载。")
                     sys.exit(4)
 
-    # 构建 rapidocr 参数（枚举值）
+    # 构建 rapidocr 参数（枚举值；逐语言模型 det/rec 可不同版本+语言）
     try:
+        det_ver = OCRVersion(mp["ocr_version"])
+        det_type = ModelType(mp["model_type"])
+        rec_ver = OCRVersion(mp.get("rec_ocr_version") or mp["ocr_version"])
+        rec_type = ModelType(mp.get("rec_model_type") or mp["model_type"])
+        rec_lang = mp.get("rec_lang") or args.lang  # 逐语言模型固定其语言
         params = {
             "Global.model_root_dir": MODEL_ROOT,
-            "Det.ocr_version": OCRVersion(mp["ocr_version"]),
-            "Det.model_type": ModelType(mp["model_type"]),
-            "Rec.ocr_version": OCRVersion(mp["ocr_version"]),
-            "Rec.model_type": ModelType(mp["model_type"]),
-            "Rec.lang_type": LangRec(args.lang),
+            "Det.ocr_version": det_ver,
+            "Det.model_type": det_type,
+            "Rec.ocr_version": rec_ver,
+            "Rec.model_type": rec_type,
+            "Rec.lang_type": LangRec(rec_lang),
             "EngineConfig.onnxruntime.use_dml": use_gpu,
         }
     except (KeyError, ValueError) as exc:

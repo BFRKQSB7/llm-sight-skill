@@ -34,7 +34,7 @@ Common flags:
 
 | Flag | Meaning | Default |
 |---|---|---|
-| `--lang ch` | language (ch, en, chinese_cht, japan — v6 supports these 4; others need a v4/v5 model) | `ch` |
+| `--lang ch` | language (ch, en, chinese_cht, japan via the v6 model; russian via PP-OCRv5_cyrillic, korean via PP-OCRv5_korean, arabic via PP-OCRv5_arabic — pick those models in `/llm-sight-model`) | `ch` |
 | `--format text` | text = one recognized line per stdout line | `text` |
 | `--format json` | structured: texts + confidence scores + box coordinates | — |
 | `--device auto` | auto picks GPU when usable, else CPU | `auto` |

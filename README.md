@@ -22,7 +22,7 @@
 - **GPU 加速可选**：DirectML 走 D3D12，**NVIDIA RTX 50 系列（Blackwell）可用**（paddle 的 CUDA 路线在 50 系不可用，本 skill 已弃用 paddle）。首次安装检测到符合要求的显卡才提示；`/llm-sight-config` 可开/关、装/删 GPU 模块
 - **CPU / GPU 各自独立模型**：CPU 默认 v6 small（快），GPU 默认 v6 medium（准），可分别配置
 - **斜杠命令配置**：选模型、GPU 开关、自动更新、代理、查环境
-- 模型候选（含体积/精度/适合人群）：PP-OCRv6_small / PP-OCRv6_medium / PP-OCRv6_tiny / PP-OCRv5_server / PP-OCRv4_mobile
+- 模型候选（含体积/识别率/语言/适合人群）：PP-OCRv6_small / PP-OCRv6_medium / PP-OCRv6_tiny / PP-OCRv5_server / PP-OCRv4_mobile / PP-OCRv5_cyrillic（俄）/ PP-OCRv5_korean（韩）/ PP-OCRv5_arabic（阿）
 
 ## 安装
 
@@ -56,7 +56,7 @@
 python ~/.claude/skills/llm-sight/scripts/ocr.py <图片路径或URL> [--lang ch] [--format text|json]
 ```
 
-`--lang` 支持：ch（默认，中英）/ en / chinese_cht / japan（v6 模型仅这 4 种；其他语言需 v4/v5 模型）。
+`--lang` 支持：ch（默认，中英+拉丁语系）/ en / chinese_cht / japan（v6 模型）；俄文用 PP-OCRv5_cyrillic（内置）、韩文 PP-OCRv5_korean、阿拉伯 PP-OCRv5_arabic（后两者检测分框不稳，建议先试）。
 
 在 Claude Code 里，非多模态模型遇到图片会自动触发本 skill 并调用上述命令。
 

@@ -58,5 +58,50 @@
     "langs": "中（含英文）",
     "who": "v4 移动端。轻量，兼容老环境，识别率略低。",
     "desc": "v4 移动端，轻量兼容老环境"
+  },
+  "PP-OCRv5_korean": {
+    "ocr_version": "PP-OCRv6",
+    "model_type": "small",
+    "rec_ocr_version": "PP-OCRv5",
+    "rec_model_type": "mobile",
+    "rec_lang": "korean",
+    "det_file": "PP-OCRv6_det_small.onnx",
+    "rec_file": "korean_PP-OCRv5_rec_mobile.onnx",
+    "size_mb": 23,
+    "det_hmean": 84.1,
+    "rec_acc": 88.0,
+    "langs": "韩",
+    "who": "韩文专用（v6 不覆盖）。det 对韩文分框不稳，整句可能读不全，建议先试。",
+    "desc": "韩文（v5 mobile rec，试验性）"
+  },
+  "PP-OCRv5_cyrillic": {
+    "ocr_version": "PP-OCRv6",
+    "model_type": "small",
+    "rec_ocr_version": "PP-OCRv5",
+    "rec_model_type": "mobile",
+    "rec_lang": "cyrillic",
+    "det_file": "PP-OCRv6_det_small.onnx",
+    "rec_file": "cyrillic_PP-OCRv5_rec_mobile.onnx",
+    "size_mb": 18,
+    "det_hmean": 84.1,
+    "rec_acc": 89.5,
+    "langs": "俄（西里尔）",
+    "who": "俄语/西里尔文专用（v6 不覆盖）。det 共用 v6 small。识别率约 89.5%。",
+    "desc": "俄语（v5 mobile rec，识别率约）"
+  },
+  "PP-OCRv5_arabic": {
+    "ocr_version": "PP-OCRv6",
+    "model_type": "small",
+    "rec_ocr_version": "PP-OCRv5",
+    "rec_model_type": "mobile",
+    "rec_lang": "arabic",
+    "det_file": "PP-OCRv6_det_small.onnx",
+    "rec_file": "arabic_PP-OCRv5_rec_mobile.onnx",
+    "size_mb": 18,
+    "det_hmean": 84.1,
+    "rec_acc": 81.5,
+    "langs": "阿",
+    "who": "阿拉伯语专用（v6 不覆盖）。检测分框不稳，效果存疑，建议先试。",
+    "desc": "阿拉伯语（v5 mobile rec，试验性）"
   }
 }

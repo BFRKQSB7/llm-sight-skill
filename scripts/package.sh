@@ -36,6 +36,7 @@ PY
 CLS="ch_ppocr_mobile_v2.0_cls_mobile.onnx"
 SMALL_DET="PP-OCRv6_det_small.onnx"; SMALL_REC="PP-OCRv6_rec_small.onnx"
 MEDIUM_DET="PP-OCRv6_det_medium.onnx"; MEDIUM_REC="PP-OCRv6_rec_medium.onnx"
+CYRILLIC_REC="cyrillic_PP-OCRv5_rec_mobile.onnx"  # standard 附带的俄文 rec（已验证可用）
 RAPID="$MODELS_SRC/models/rapidocr"
 
 copy_models() {
@@ -52,8 +53,8 @@ copy_models() {
 build_zip "$STAGE" "$DIST/llm-sight-${VERSION}_lite.zip"
 
 if [ -n "$MODELS_SRC" ] && [ -d "$RAPID" ]; then
-  # _standard: 只带 v6 small（CPU 默认模型）
-  copy_models "$CLS" "$SMALL_DET" "$SMALL_REC"
+  # _standard: v6 small（CPU 默认）+ 俄文 rec（已验证可用）；korean/arabic 按需下载
+  copy_models "$CLS" "$SMALL_DET" "$SMALL_REC" "$CYRILLIC_REC"
   build_zip "$STAGE" "$DIST/llm-sight-${VERSION}_standard.zip"
   # _full: 再加 v6 medium（GPU 默认模型）+ marker
   copy_models "$MEDIUM_DET" "$MEDIUM_REC"

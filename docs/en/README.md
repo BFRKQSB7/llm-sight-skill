@@ -34,8 +34,10 @@ or fabricated content.
 - **Separate models per device**: CPU defaults to v6 small (fast), GPU defaults
   to v6 medium (accurate); each configurable independently
 - **Slash-command config**: pick models, GPU toggle, auto-update, proxy, status
-- Model options (with size / accuracy / who-it-fits): PP-OCRv6_small /
-  PP-OCRv6_medium / PP-OCRv6_tiny / PP-OCRv5_server / PP-OCRv4_mobile
+- Model options (with size / recognition rate / language / who-it-fits):
+  PP-OCRv6_small / PP-OCRv6_medium / PP-OCRv6_tiny / PP-OCRv5_server /
+  PP-OCRv4_mobile / PP-OCRv5_cyrillic (Russian) / PP-OCRv5_korean (Korean) /
+  PP-OCRv5_arabic (Arabic)
 
 ## Install
 
@@ -77,8 +79,10 @@ or fabricated content.
 python ~/.claude/skills/llm-sight/scripts/ocr.py <image_path_or_url> [--lang ch] [--format text|json]
 ```
 
-`--lang` supports: ch (default, Chinese + English) / en / chinese_cht / japan
-(the v6 model covers these 4; other languages need a v4/v5 model).
+`--lang` supports: ch (default, Chinese + English + Latin-script) / en /
+chinese_cht / japan (via the v6 model); Russian via PP-OCRv5_cyrillic
+(bundled), Korean via PP-OCRv5_korean, Arabic via PP-OCRv5_arabic (the latter
+two have unstable text-region detection — test before relying on them).
 
 In Claude Code, a non-multimodal model auto-triggers this skill on images and
 runs the command above.

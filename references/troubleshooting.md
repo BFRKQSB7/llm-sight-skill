@@ -23,7 +23,9 @@ stdlib — it is NOT the OCR runtime):
   set; without it, it says "not configured" and moves on.
 - Models in this skill (name → params in `scripts/models.json`): PP-OCRv6_small
   (CPU default, 31MB) / PP-OCRv6_medium (GPU default, 136MB) / PP-OCRv6_tiny
-  (7MB) / PP-OCRv5_server (165MB) / PP-OCRv4_mobile (15MB).
+  (7MB) / PP-OCRv5_server (165MB) / PP-OCRv4_mobile (15MB) /
+  PP-OCRv5_cyrillic (18MB, bundled) / PP-OCRv5_korean (23MB) /
+  PP-OCRv5_arabic (18MB).
 
 ## Environment (the skill's venv)
 
@@ -50,10 +52,13 @@ module). Manage the swap via `setup.py config --gpu-module install|remove`.
 
 ## Languages (v6 model)
 
-PP-OCRv6 det/rec supports **ch / en / chinese_cht / japan** only. Other languages
-(e.g. korean, cyrillic, latin) need a v4/v5 per-language model — `--lang korean`
-with a v6 model errors with a clear message. Use `/llm-sight-model` to pick a
-v4/v5 model for those.
+PP-OCRv6 det/rec supports **ch / en / chinese_cht / japan** (the v6 rec also reads
+Latin-script languages under `ch`). Other languages use per-language models in the
+list: **PP-OCRv5_cyrillic** (russian, bundled in `_standard`/`_full`),
+**PP-OCRv5_korean** / **PP-OCRv5_arabic** (download on demand; detection of these
+scripts can be unstable — test before relying on them). Pick the model via
+`/llm-sight-model`; `--lang` on a v6 model with an unsupported language errors
+with a clear message.
 
 ## GPU support (DirectML — works on Blackwell)
 
