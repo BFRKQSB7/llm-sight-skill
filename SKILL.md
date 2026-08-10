@@ -75,7 +75,10 @@ The OCR engine is onnxruntime. GPU acceleration is an optional DirectML module
 (`onnxruntime-directml`) — it works on any DX12-capable GPU including NVIDIA RTX
 50 series (paddle's CUDA path does NOT work on Blackwell; this skill no longer
 uses paddle). On first install, if the machine has a capable GPU the setup asks
-whether to enable it. Manage it anytime via `/llm-sight-config`:
+whether to enable it. **On the first OCR call, if the hardware supports DirectML,
+the module is installed, and at least one model is downloaded, GPU acceleration
+turns on automatically using the best downloaded model** — you can turn it off
+anytime via `/llm-sight-config --gpu off`. Manage it via `/llm-sight-config`:
 - `--gpu on|off` — enable/disable GPU acceleration
 - `--gpu-module install|remove` — install / delete the GPU module (reinstall
   re-checks the hardware; if the machine can't use GPU it recommends NOT

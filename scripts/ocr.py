@@ -54,6 +54,7 @@ DEFAULT_CONFIG = {
     "model_cpu": "PP-OCRv6_small",
     "model_gpu": "PP-OCRv6_medium",
     "gpu": False,
+    "gpu_explicit": False,
     "gpu_capable": False,
     "auto_update": True,
 }
@@ -276,14 +277,26 @@ def main():
     module = gpu_module_installed()
     gpu_usable = capable and module
 
+    # 首次调用默认启用 GPU：硬件支持 + 模块已装 + 有已下载模型 + 用户未显式选择过
+    auto_enabled = False
+    if gpu_usable and args.device != "cpu" and not cfg.get("gpu") and not cfg.get("gpu_explicit"):
+        if best_installed_model():
+            cfg["gpu"] = True
+            write_config(cfg)
+            auto_enabled = True
+            eprint("[ocr] 检测到可用 GPU 加速（硬件+模块+模型齐全），已默认启用；"
+                   "可用 /llm-sight-config --gpu off 关闭")
+
     # 解析活动设备
-    use_gpu = cfg.get("gpu", False) and gpu_usable
+    use_gpu = False
     if args.device == "cpu":
         use_gpu = False
     elif args.device == "gpu":
         use_gpu = gpu_usable
         if not gpu_usable:
             eprint("[ocr] GPU 不可用（硬件不支持或未装 GPU 模块），回落 CPU。")
+    else:  # auto
+        use_gpu = cfg.get("gpu", False) and gpu_usable
     if cfg.get("gpu", False) and not gpu_usable:
         eprint("[ocr] config 里启用了 GPU 但当前不可用（缺模块或硬件不支持），本次回落 CPU。")
 
@@ -295,10 +308,13 @@ def main():
         if ans.startswith("y"):
             use_gpu = True
 
-    # 模型按活动设备选（CPU/GPU 各自独立配置）
-    model_name = cfg.get("model_gpu" if use_gpu else "model_cpu") or (
-        DEFAULT_CONFIG["model_gpu"] if use_gpu else DEFAULT_CONFIG["model_cpu"]
-    )
+    # 模型按活动设备选（CPU/GPU 各自独立配置）；首次自动启用用已装最佳模型
+    if auto_enabled:
+        model_name = best_installed_model() or cfg.get("model_gpu") or DEFAULT_CONFIG["model_gpu"]
+    else:
+        model_name = cfg.get("model_gpu" if use_gpu else "model_cpu") or (
+            DEFAULT_CONFIG["model_gpu"] if use_gpu else DEFAULT_CONFIG["model_cpu"]
+        )
     mp = model_params(model_name)
 
     eprint(f"[ocr] device={'gpu' if use_gpu else 'cpu'} lang={args.lang} model={model_name}")

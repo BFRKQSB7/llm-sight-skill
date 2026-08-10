@@ -535,7 +535,9 @@ def cmd_config(args):
     if args.manifest_url is not None:
         cfg["manifest_url"] = args.manifest_url or None
 
-    # GPU 开关 / 模块管理
+    # GPU 开关 / 模块管理（用户显式操作 → 记 gpu_explicit，首次调用不再自动覆盖）
+    if args.gpu is not None or args.gpu_module:
+        cfg["gpu_explicit"] = True
     if args.gpu is not None:
         capable, module, dml = venv_gpu_status()
         if args.gpu:
