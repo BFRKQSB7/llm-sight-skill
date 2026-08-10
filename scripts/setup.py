@@ -517,6 +517,67 @@ def cmd_install(args):
     return 0
 
 
+def _config_model_menu():
+    """config 面板的交互模型管理：下载未装 / 删除已装 / 设默认。"""
+    mmap = load_models_map()
+    while True:
+        cfg = read_config()
+        print("\n[config] 模型管理（体积 · 识别率 · 支持语言 · 适合人群）：")
+        for i, name in enumerate(mmap, 1):
+            print(f"  {i}. {model_line(name, cfg)}")
+        print("[config] 操作: [d]下载未装的模型  [r]删除已装的模型  [s]设默认  [q]返回")
+        op = _readline("> ").strip().lower()
+        if op == "q" or not op:
+            return 0
+        if op == "d":
+            uninst = [n for n in mmap if not installed_models()[n]]
+            if not uninst:
+                print("[config] 所有模型都已安装")
+                continue
+            print("[config] 未安装的可下载模型：")
+            for i, n in enumerate(uninst, 1):
+                m = mmap[n]
+                print(f"  {i}. {n} — {m['size_mb']}MB · 识别率 det {m['det_hmean']}%/rec "
+                      f"{m['rec_acc']}% · 语言 {m.get('langs', '?')} · {m['who']}")
+            sel = _readline("输入编号下载（回车=取消）: ").strip()
+            if sel.isdigit() and 1 <= int(sel) <= len(uninst):
+                p = _readline("代理地址（回车=用 config）: ").strip() or None
+                try:
+                    ensure_models(read_config(), uninst[int(sel) - 1], p)
+                except SystemExit as e:
+                    print(f"[config] {e}")
+        elif op == "r":
+            inst = [n for n in mmap if installed_models()[n]]
+            if not inst:
+                print("[config] 没有已安装的模型")
+                continue
+            print("[config] 已安装的模型（可删除）：")
+            for i, n in enumerate(inst, 1):
+                m = mmap[n]
+                print(f"  {i}. {n} — {m['size_mb']}MB · 识别率 det {m['det_hmean']}%/rec {m['rec_acc']}%")
+            sel = _readline("输入编号删除（回车=取消）: ").strip()
+            if sel.isdigit() and 1 <= int(sel) <= len(inst):
+                rm_model(inst[int(sel) - 1], read_config())
+        elif op == "s":
+            print("[config] 设默认：")
+            for i, n in enumerate(mmap, 1):
+                print(f"  {i}. {n}")
+            sel = _readline("输入编号（回车=取消）: ").strip()
+            if sel.isdigit() and 1 <= int(sel) <= len(mmap):
+                name = list(mmap)[int(sel) - 1]
+                wh = _readline("设为 [c]仅CPU  [g]仅GPU  [回车]CPU+GPU: ").strip().lower()
+                cfg = read_config()
+                if wh == "c":
+                    cfg["model_cpu"] = name
+                elif wh == "g":
+                    cfg["model_gpu"] = name
+                else:
+                    cfg["model_cpu"] = cfg["model_gpu"] = name
+                write_config(cfg)
+                print(f"[config] 默认模型已设为 {name}")
+    return 0
+
+
 def cmd_config(args):
     cfg = read_config()
     mmap = load_models_map()
@@ -525,7 +586,7 @@ def cmd_config(args):
         args.model_cpu, args.model_gpu, args.auto_update, args.help_hint,
         args.proxy, args.manifest_url, args.gpu, args.gpu_module))
     if not changed:
-        # 无参数 → 显示配置面板（含模型大小与已下载列表）
+        # 无参数 → 显示配置面板（含模型大小与已下载列表）；交互时进模型管理
         capable, module, dml = venv_gpu_status()
         inst = installed_models()
         inst_list = [f"{n}({mmap[n]['size_mb']}MB)" for n in mmap if inst[n]]
@@ -542,8 +603,9 @@ def cmd_config(args):
         print("[config] 可用模型：")
         for line in model_table(cfg):
             print(f"  {line}")
-        print("[config] 管理模型（下载/删除/设默认）用 /llm-sight-model 或 models menu；")
         print("[config] 改设置加参数，如 --model-cpu X --model-gpu Y --gpu on|off --gpu-module install|remove")
+        if sys.stdin.isatty():
+            return _config_model_menu()
         return 0
 
     for attr, val in (("model_cpu", args.model_cpu), ("model_gpu", args.model_gpu)):
