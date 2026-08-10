@@ -19,7 +19,7 @@ py -3.12 "$HOME/.claude/skills/llm-sight/scripts/setup.py" config
 - 代理（用于下载/更新检查，如用户网络需代理）：`--proxy http://127.0.0.1:<端口>`
 - 更新清单 URL：`--manifest-url <URL>`
 
-可用模型：PP-OCRv6_small（CPU 默认）/ PP-OCRv6_medium（GPU 默认）/ PP-OCRv6_tiny / PP-OCRv5_server / PP-OCRv4_mobile（用 `models list` 看体积/精度/适合人群）。
+可用模型：PP-OCRv6_small（CPU 默认）/ PP-OCRv6_medium（GPU 默认）/ PP-OCRv6_tiny / PP-OCRv5_server / PP-OCRv4_mobile（用 `models list` 看体积/识别率/语言/适合人群）。
 
 首次需要下载模型时：先问用户要哪个模型和是否走代理（空=直连），再跑：
 ```bash

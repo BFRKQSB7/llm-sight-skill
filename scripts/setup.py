@@ -261,7 +261,7 @@ def model_line(name, cfg=None, inst=None):
     tag = f" [{'/'.join(marks)}]" if marks else ""
     st = "已装" if (inst is None or inst[name]) else "未装"
     return (f"{name} [{st}]{tag} — {m['size_mb']}MB · "
-            f"精度 det {m['det_hmean']}/rec {m['rec_acc']} · {m['who']}")
+            f"识别率 det {m['det_hmean']}%/rec {m['rec_acc']}% · 语言 {m.get('langs', '?')} · {m['who']}")
 
 
 def model_table(cfg=None):
@@ -502,7 +502,8 @@ def cmd_install(args):
             m = mmap[default_model]
             ans = _readline(
                 f"[install] 推荐下载默认模型 {default_model}（{m['size_mb']}MB · "
-                f"精度 det {m['det_hmean']}/rec {m['rec_acc']}）。下载吗？(y=下载 / N=跳过，首次识图再下载）: "
+                f"识别率 det {m['det_hmean']}%/rec {m['rec_acc']}% · 语言 {m.get('langs', '?')}）。下载吗？"
+                f"(y=下载 / N=跳过，首次识图再下载）: "
             ).strip().lower()
             if ans.startswith("y"):
                 ensure_models(cfg, default_model, proxy)

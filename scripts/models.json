@@ -7,8 +7,9 @@
     "size_mb": 31,
     "det_hmean": 84.1,
     "rec_acc": 81.3,
-    "who": "CPU 默认。速度与精度平衡，日常识图多数场景够用。",
-    "desc": "默认（CPU），速度与精度平衡"
+    "langs": "中/英/繁中/日",
+    "who": "CPU 默认。速度与识别率平衡，日常识图多数场景够用。",
+    "desc": "默认（CPU），速度与识别率平衡"
   },
   "PP-OCRv6_medium": {
     "ocr_version": "PP-OCRv6",
@@ -18,8 +19,9 @@
     "size_mb": 136,
     "det_hmean": 86.2,
     "rec_acc": 83.2,
-    "who": "GPU 默认。精度最高，配合 DirectML 很快；纯 CPU 上很慢（不建议）。",
-    "desc": "默认（GPU），精度最高，CPU 上慢"
+    "langs": "中/英/繁中/日",
+    "who": "GPU 默认。识别率最高，配合 DirectML 很快；纯 CPU 上很慢（不建议）。",
+    "desc": "默认（GPU），识别率最高，CPU 上慢"
   },
   "PP-OCRv6_tiny": {
     "ocr_version": "PP-OCRv6",
@@ -29,6 +31,7 @@
     "size_mb": 7,
     "det_hmean": 80.6,
     "rec_acc": 73.5,
+    "langs": "中/英/繁中/日",
     "who": "最轻最快。低配机器、海量图片批处理的场景。",
     "desc": "最轻最快，适合低配/批处理"
   },
@@ -40,8 +43,9 @@
     "size_mb": 165,
     "det_hmean": 83.8,
     "rec_acc": 86.4,
-    "who": "中文识别精度最高（v5 服务器版）。体积大，CPU 慢；对精度要求高且用 GPU 时考虑。",
-    "desc": "v5 服务器版，中文精度最高，体积大"
+    "langs": "中（含英文）",
+    "who": "中文识别率最高（v5 服务器版）。体积大，CPU 慢；对识别率要求高且用 GPU 时考虑。",
+    "desc": "v5 服务器版，中文识别率最高，体积大"
   },
   "PP-OCRv4_mobile": {
     "ocr_version": "PP-OCRv4",
@@ -51,7 +55,8 @@
     "size_mb": 15,
     "det_hmean": 78.7,
     "rec_acc": 78.8,
-    "who": "v4 移动端。轻量，兼容老环境，精度略低。",
+    "langs": "中（含英文）",
+    "who": "v4 移动端。轻量，兼容老环境，识别率略低。",
     "desc": "v4 移动端，轻量兼容老环境"
   }
 }

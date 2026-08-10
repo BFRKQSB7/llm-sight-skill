@@ -150,6 +150,56 @@ def _confirm(prompt):
         return ""
 
 
+def _readline_raw(prompt):
+    """读取一行原样输入（用于模型名选择）；EOF 返回空串。"""
+    try:
+        return input(prompt).strip()
+    except (EOFError, OSError):
+        return ""
+
+
+def installed_models_info():
+    """已装模型列表：[(name, size_mb), ...]。"""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json"),
+                  encoding="utf-8") as f:
+            mmap = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [(n, m.get("size_mb")) for n, m in mmap.items()
+            if m.get("det_file") and model_cached(n)]
+
+
+def ask_other_model(refused_name):
+    """问是否下载其他模型；返回选中的模型名，或 None（不下载）。"""
+    if not sys.stdin.isatty():
+        return None
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json"),
+                  encoding="utf-8") as f:
+            mmap = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    inst = installed_models_info()
+    if inst:
+        print("[ocr] 已安装的模型（体积）：" + "、".join(f"{n} ({s}MB)" for n, s in inst))
+    cands = [n for n in mmap if n != refused_name]
+    print("[ocr] 可选的其他模型（体积 · 识别率 · 支持语言 · 适合人群）：")
+    for i, n in enumerate(cands, 1):
+        m = mmap[n]
+        print(f"  {i}. {n} — {m.get('size_mb')}MB · 识别率 det {m.get('det_hmean')}%/rec "
+              f"{m.get('rec_acc')}% · 语言 {m.get('langs', '?')} · {m.get('who')}")
+    s = _readline_raw("输入编号或名称选一个下载（回车=不下载，自动用已装的）: ")
+    if not s:
+        return None
+    if s.isdigit() and 1 <= int(s) <= len(cands):
+        return cands[int(s) - 1]
+    if s in mmap:
+        return s
+    print("[ocr] 无效输入，视为不下载。")
+    return None
+
+
 def resolve_image(path, scratch):
     """Return a local file path. Downloads URLs into scratch dir."""
     if path.startswith(("http://", "https://")):
@@ -167,7 +217,7 @@ def resolve_image(path, scratch):
 
 
 def best_installed_model():
-    """返回已装模型里识别精度最高的一个（无则 None）。"""
+    """返回已装模型里识别率最高的一个（无则 None）。"""
     try:
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.json"),
                   encoding="utf-8") as f:
@@ -253,26 +303,37 @@ def main():
 
     eprint(f"[ocr] device={'gpu' if use_gpu else 'cpu'} lang={args.lang} model={model_name}")
 
-    # 默认模型未下载 → 回退到已装的最佳模型（只提示不强求）；一个都没有才要求下载
+    # 默认模型未下载 → 询问下载默认 → 询问其他 → 否则自动指定（已装最佳 / 设默认后退出）
     if not model_cached(model_name):
-        fallback = best_installed_model()
-        if fallback:
-            eprint(f"[ocr] 默认模型 {model_name} 未下载。本次用已安装的 {fallback} 识别"
-                   f"（想用更高精度可 /llm-sight-model 下载 {model_name}）。")
-            model_name = fallback
-            mp = model_params(fallback)
-        else:
-            eprint(
-                f"[ocr] 未安装任何 OCR 模型，首次识别需要下载一个"
-                f"（{model_name}，{mp.get('size_mb')}MB，识别精度 det {mp.get('det_hmean')}/rec {mp.get('rec_acc')}）。"
-            )
-            ans = _confirm(f"[ocr] 现在下载默认模型 {model_name} 吗？（y=下载 / N=取消，取消后图片无法识别）: ")
-            if ans.startswith("y"):
-                if not download_model(model_name, cfg):
-                    sys.exit(4)
-            else:
-                eprint(f"[ocr] 取消下载。可用 /llm-sight-model 或 setup.py models add {model_name} 下载（会询问你）。")
+        inst = installed_models_info()
+        if inst:
+            eprint("[ocr] 已安装的模型（体积）：" + "、".join(f"{n} ({s}MB)" for n, s in inst))
+        ans = _confirm(
+            f"[ocr] 默认模型 {model_name} 未下载（{mp.get('size_mb')}MB · 识别率 "
+            f"det {mp.get('det_hmean')}%/rec {mp.get('rec_acc')}% · 语言 {mp.get('langs', '?')}）。"
+            f"现在下载吗？（y=下载 / N=再看看）: "
+        )
+        if ans.startswith("y"):
+            if not download_model(model_name, cfg):
                 sys.exit(4)
+        else:
+            other = ask_other_model(model_name)
+            if other:
+                if not download_model(other, cfg):
+                    sys.exit(4)
+                model_name = other
+                mp = model_params(other)
+            else:
+                fb = best_installed_model()
+                if fb:
+                    eprint(f"[ocr] 不下载，自动指定使用已安装的 {fb} 识别。")
+                    eprint("[ocr]   想换模型可 /llm-sight-model。")
+                    model_name = fb
+                    mp = model_params(fb)
+                else:
+                    eprint(f"[ocr] 未安装任何模型，本次无法识别。已自动指定默认模型为 {model_name}。")
+                    eprint(f"[ocr]   可稍后用 /llm-sight-model 或 setup.py models add {model_name} 下载。")
+                    sys.exit(4)
 
     # 构建 rapidocr 参数（枚举值）
     try:

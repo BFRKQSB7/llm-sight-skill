@@ -10,7 +10,7 @@ py -3.12 "$HOME/.claude/skills/llm-sight/scripts/setup.py" models menu
 ```
 
 非交互环境会打印列表；也可直接指定：
-- 列出（含体积/精度/适合人群）：`... models list`
+- 列出（含体积/识别率/语言/适合人群）：`... models list`
 - 设默认（CPU+GPU 一起）：`... models set-default <模型名>`
 - 仅设 CPU 默认：`... models set-default <模型名> --cpu`
 - 仅设 GPU 默认：`... models set-default <模型名> --gpu`
