@@ -75,6 +75,20 @@ python ~/.claude/skills/llm-sight/scripts/ocr.py <图片路径或URL> [--lang ch
 
 `llm-sight` 意为"大模型的视力"。它封装的是 **PP-OCR**（PaddleOCR 模型经 rapidocr 转 ONNX 部署）模型，但本身不是模型、也不是 PP-OCR 本身——是一个帮非多模态大模型读取图中文字的 Claude Code skill。
 
+## 变更日志
+
+### v2.0.0
+- **版本**：OCR 引擎全切 rapidocr（onnxruntime + DirectML），GPU 转可选模块，三版本打包（`_lite` / `_standard` / `_full`）
+- **新增**：交互配置面板斜杠命令（`/llm-sight-config`：模型 + GPU 开关/模块 + 代理 + 自动更新）
+- **新增**：逐语言模型（korean / cyrillic / arabic）
+- **修复**：install_gpu_module 先卸载 onnxruntime 再装 directml（避免两包同名模块并存）；模型列表"全部显示已装"假象
+
+### v1.0.1
+- **修复**：系列安装 / 下载流程问题（venv 缺失用系统 python 兜底、pip 依赖走配置代理、模型下载必询问、package.sh 打包 bug）
+
+### v1.0.0
+- **版本**：首个可分发版发布
+
 ## License
 
 [MIT](./LICENSE)
